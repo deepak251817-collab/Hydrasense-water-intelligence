@@ -19,13 +19,14 @@ This directory contains the Machine Learning data preparation pipeline and Isola
 ml/
 ├── data/
 │   ├── raw/                 # Raw telemetry exported from PostgreSQL (sensor_readings.csv)
-│   ├── processed/           # Cleaned telemetry, chronological splits, and anomaly_results.csv
-│   └── external/            # Placeholder for verified public/research datasets
+│   ├── processed/           # Cleaned telemetry, chronological splits, anomaly_results.csv, and supervised splits
+│   └── external/            # External benchmark datasets (water_quality_dataset1.csv)
 │
 ├── preprocessing/
 │   ├── __init__.py
 │   ├── clean_data.py        # Timestamp normalization, duplicate removal, physical range validation
-│   └── features.py          # Time features (hour, day_of_week) & station-aware change features
+│   ├── features.py          # Time features (hour, day_of_week) & station-aware change features
+│   └── prepare_supervised.py# Schema validation, standardized mapping, stratified splits, preprocessor
 │
 ├── scripts/
 │   ├── __init__.py
@@ -34,13 +35,16 @@ ml/
 │   ├── create_splits.py            # Chronological train (70%) / validation (15%) / test (15%) splits
 │   ├── train_isolation_forest.py   # Train Isolation Forest on train.csv and save model
 │   ├── detect_anomalies.py         # Generate anomaly_score and anomaly_label (0=normal, 1=anomaly)
-│   └── evaluate_isolation_forest.py# Unsupervised qualitative evaluation on validation/test splits
+│   ├── evaluate_isolation_forest.py# Unsupervised qualitative evaluation on validation/test splits
+│   ├── inspect_supervised_dataset.py # Phase 5C-1 dataset inspection & validation report
+│   └── prepare_supervised_splits.py  # Phase 5C-1 stratified splitting & leakage verification
 │
 ├── tests/
 │   ├── __init__.py
 │   ├── test_ml_pipeline.py         # Test suite for ML data preparation pipeline
 │   ├── test_data_leakage.py        # Explicit feature & chronological split leakage tests
-│   └── test_isolation_forest.py    # Unit & stress tests for Isolation Forest pipeline
+│   ├── test_isolation_forest.py    # Unit & stress tests for Isolation Forest pipeline
+│   └── test_supervised_dataset.py  # Unit & leakage tests for supervised dataset preparation (Phase 5C-1)
 │
 ├── notebooks/                      # EDA and exploratory work
 ├── models/
@@ -143,9 +147,68 @@ python ml/scripts/evaluate_isolation_forest.py
 
 ---
 
+## Phase 5C-1 — Supervised Dataset Preparation
+
+Phase 5C-1 establishes the real-world dataset foundation for supervised water-quality classification, strictly preparing and validating the data prior to model training.
+
+### 1. Source Dataset Specifications
+- **Location**: `ml/data/external/water_quality_dataset1.csv` (preserved completely unmodified)
+- **Total Records**: 100,800 observations
+- **Total Features**: 4 continuous physicochemical parameters + 1 binary target label
+- **Integrity**: 0 missing values, 0 duplicate rows, 0 physical range violations
+
+### 2. Standardized Feature Mapping
+
+| Source Dataset Column | Project Parameter | Standardized Processed Name | Physical Bounds Check |
+|---|---|---|---|
+| `pH` | pH | `pH` | `[0.0, 14.0]` |
+| `TDS_ppm` | Total Dissolved Solids | `tds` | `[0.0, 100000.0]` ppm |
+| `Turbidity_NTU` | Turbidity | `turbidity` | `[0.0, 5000.0]` NTU |
+| `Temperature_C` | Temperature | `temperature` | `[-10.0, 60.0]` °C |
+| `Label` | Water Quality Classification | `label` | `{'Safe', 'Unsafe'}` |
+
+### 3. Target Label & Class Distribution
+- **Target Column**: `Label` (processed as `label`)
+- **Observed Classes**:
+  - `Unsafe`: 70,560 rows (70.00%)
+  - `Safe`: 30,240 rows (30.00%)
+- **Class Imbalance Ratio**: 2.3333 : 1 (`Unsafe` : `Safe`)
+- **Imbalance Policy**: As specified for Phase 5C-1, the natural class distribution is preserved without synthetic oversampling (SMOTE) or heuristic rebalancing.
+
+### 4. Stratified Split Strategy (`random_state=42`)
+Because this external benchmark dataset represents cross-sectional observations rather than continuous station telemetry time series, a two-stage reproducible stratified split is used:
+- **Training Set (70%)**: `ml/data/processed/supervised_train.csv` (70,560 rows: 49,392 Unsafe, 21,168 Safe)
+- **Validation Set (15%)**: `ml/data/processed/supervised_validation.csv` (15,120 rows: 10,584 Unsafe, 4,536 Safe)
+- **Test Set (15%)**: `ml/data/processed/supervised_test.csv` (15,120 rows: 10,584 Unsafe, 4,536 Safe)
+
+### 5. Data Leakage Prevention Guarantees
+- **Target Exclusion**: `label` is strictly segregated from input feature matrices ($X$) during pipeline fitting and evaluation.
+- **Preprocessor Fitting**: `SupervisedPreprocessor` is fitted strictly on the training feature matrix `X_train`. Validation and test sets are transformed without fitting.
+- **Disjoint Partitions**: Train, validation, and test row indices are pairwise disjoint ($0$ row overlap).
+- **Deterministic Reproducibility**: Splits generated with fixed seed `random_state=42` ensure 100% reproducible row allocations across environments.
+
+### 6. Limitations & Scope Disclaimer
+> [!WARNING]
+> **Scope of Classification Target**:
+> 1. The `Safe` / `Unsafe` target is defined strictly according to the labeling criteria of the source dataset.
+> 2. This label does **NOT** automatically represent universal potability, drinking-water safety, agricultural suitability, industrial suitability, or swimming suitability.
+> 3. No additional water-use categories are inferred or synthetically attributed to these records.
+
+### 7. Phase 5C-1 Commands
+```bash
+# Inspect source dataset statistics and validate data integrity
+python ml/scripts/inspect_supervised_dataset.py
+
+# Generate stratified train/val/test splits with leakage validation
+python ml/scripts/prepare_supervised_splits.py
+```
+
+---
+
 ## Running Automated Test Suite
 
-Run the full ML test suite (25 tests covering pipeline, leakage, and Isolation Forest):
+Run the full ML test suite (40 tests covering Phase 5A pipeline, Phase 5B Isolation Forest, and Phase 5C-1 supervised dataset):
 ```bash
-pytest -v ml/tests
+python -m pytest -v ml/tests
 ```
+
