@@ -3,3 +3,6 @@ numpy
 scikit-learn
 matplotlib
 joblib
+# Phase 5D-2: XGBoost deterioration prediction
+# Installed & verified: xgboost 3.2.0 (pip install xgboost)
+xgboost>=2.0

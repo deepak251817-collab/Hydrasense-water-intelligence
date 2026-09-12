@@ -310,9 +310,222 @@ python ml/scripts/evaluate_random_forest.py --split validation --verify-reproduc
 
 ---
 
+## Phase 5D-1 — Forecasting Dataset Preparation (USGS Edition)
+
+> [!NOTE]
+> **Status update:** the original Phase 5D-1 run ended in a documented STOP state (no suitable chronological dataset). A real time-series source has since been acquired — **USGS station USGS-01649190** (four 2024 exports) — and this section documents the completed, real-data preparation. The STOP-state tooling (`ml/scripts/inspect_forecasting_dataset.py` and its tests) remains in place and is still exercised on isolated unsuitable candidates.
+
+Phase 5D-1 prepares a **genuine chronological dataset** for predicting future water-quality deterioration. Per the phase specification, if no suitable time-series dataset exists, preparation must **STOP and report** rather than fabricate time information.
+
+### 1. Dataset Assessment Result
+
+`ml/scripts/inspect_forecasting_dataset.py` assessed every available candidate:
+
+| Candidate | Rows | Timestamps | Stations | Verdict |
+|---|---|---|---|---|
+| `ml/data/external/water_quality_dataset1.csv` | 100,800 | **None** | **None** | **NOT SUITABLE** — static classification benchmark (the Phase 5C dataset itself); no time axis, no site identity. Using it as a forecasting dataset merely because it has many rows is explicitly forbidden. |
+| `ml/data/processed/clean_sensor_readings.csv` | 9 | Yes (real) | 3 | **NOT SUITABLE** — genuine telemetry but far too short (3 observations per station vs. the documented minimum of 50 sequential observations per station). |
+
+**Verdict: STOP — no suitable forecasting dataset is available.** No `forecast_train.csv`, `forecast_validation.csv`, or `forecast_test.csv` were created. No timestamps, stations, or measurements were invented, and conductivity (if present in a future dataset) will not be converted to TDS without an explicitly supported scientific conversion.
+
+### 2. Documented Suitability Criteria (for the required dataset)
+A qualifying forecasting dataset must have:
+1. A real timestamp/date column (no invented time axes).
+2. A station/site identifier enabling per-location time series.
+3. At least 50 sequential observations per station (200+ recommended).
+4. The four core parameters — pH, turbidity, TDS, temperature. A genuinely missing parameter must be reported, never fabricated.
+
+### 3. Prediction Design Held Ready (validated on synthetic in-test series only)
+The complete, leakage-safe preparation pipeline is implemented in `ml/preprocessing/forecasting.py` and fully unit-tested in `ml/tests/test_forecasting_dataset.py` (36 tests). It will be applied to a real dataset in the next phase once one is acquired:
+
+- **Historical features (past-only, per station):** current pH/turbidity/tds/temperature; `{param}_lag_k` (value k observations earlier); `{param}_roll_mean_w` / `{param}_roll_std_w` (computed over the w observations strictly BEFORE the current row via `shift(1).rolling(w)`, current value excluded); `{param}_change_1` (current minus previous). Every feature is documented in `FEATURE_DEFINITIONS` in the module.
+- **Prediction horizon:** the next observation of the same station (`horizon=1`); a longer fixed window can be configured.
+- **Deterioration definition (rule-based, documented):** target = 1 if, between time t and t+horizon at the same station, turbidity increases by more than 10% (relative), OR tds increases by more than 10% (relative), OR pH moves further from neutral (7.0) by more than 0.20 pH units (absolute). Temperature is deliberately excluded (warmer/cooler is not inherently worse). This is a rule-based **future deterioration indicator** derived from the dataset's own labeling rule — **NOT** a validated contamination or potability measure.
+- **Chronological splitting:** global timestamp boundaries at the 70% / 85% quantiles of sorted unique timestamps (≈70/15/15). No shuffling; rows sharing a boundary timestamp stay in the same split; station identity is preserved in every split. Exact boundaries are reported by `chronological_split()` metadata.
+- **Leakage prevention:** lag/rolling features use `shift(k)` / `shift(1).rolling(w)` within each station, so inputs at time t depend only on observations up to t. Future observations are read (`shift(-horizon)`, grouped by station) **for label creation only** and never appear in feature columns; the target column is excluded from the feature contract. Tests prove features are invariant when future values are corrupted or later rows are truncated.
+- **Missing values:** reported per parameter; never imputed. The deterioration rule is undefined (NaN) where the values it needs are missing, at series ends, and never crosses a station boundary.
+
+### 4. Limitations
+> [!WARNING]
+> - No forecasting dataset exists in the project yet; all forecasting outputs are intentionally absent.
+> - The deterioration target, when eventually generated, reflects the rule above applied to the chosen dataset — it does not measure actual contamination, potability, or health risk.
+> - Simulator telemetry remains unsuitable for forecasting evaluation even at scale, per the Phase 5A policy (simulator scenarios are not scientific ground truth).
+
+### 5. Phase 5D-1 Commands
+```bash
+# Assess generic candidate datasets for chronological forecasting suitability
+python ml/scripts/inspect_forecasting_dataset.py
+
+# Inspect the four USGS source files (station, codes, units, intervals, gaps)
+python ml/scripts/inspect_usgs_timeseries.py
+
+# Build the synchronized dataset, features, target, and chronological splits
+python ml/scripts/prepare_usgs_forecast_dataset.py
+
+# Report the final forecasting dataset statistics
+python ml/scripts/forecast_dataset_report.py
+
+# Run the forecasting dataset test suite (39 tests)
+python -m pytest ml/tests/test_forecasting_dataset.py -v
+```
+
+---
+
+## Phase 5D-1 (USGS) — Real Time-Series Dataset Preparation — COMPLETED
+
+This sub-phase prepared the real chronological forecasting dataset from USGS monitoring station **USGS-01649190** (Anacostia River at Anacostia, DC; four 2024 5-minute interval exports).
+
+### 1. Source Files (unmodified, in `ml/data/external/`)
+| File | USGS Parameter Code | Project Column | Unit | Rows |
+|---|---|---|---|---|
+| `usgs_temperature_2024.csv` | 00010 | `temperature` | degC | 10,000 |
+| `usgs_ph_2024.csv` | 00400 | `pH` | pH Units | 10,000 |
+| `usgs_conductance_2024.csv` | 00095 | `specific_conductance` | uS/cm | 10,000 |
+| `usgs_turbidity_2024.csv` | 63680 | `turbidity` | FNU | 10,000 |
+
+All four files were verified to originate from `USGS-01649190` with the expected parameter codes (temperature and pH records are USGS "Approved"; turbidity records are "Provisional").
+
+**Specific conductance is retained as a distinct measurement and is not treated as TDS.** No conductivity-to-TDS conversion is performed anywhere in the pipeline (a valid conversion depends on ionic composition), and no `tds` column exists in any USGS forecasting artifact.
+
+### 2. Timestamp Handling & Synchronization
+- The real `time` column (ISO 8601, UTC-offset) is parsed to UTC and standardized as `timestamp`; no timestamps are invented and row positions are never used as time.
+- The four datasets are combined with an **inner join on (station, timestamp)** — never row concatenation — so every retained row carries all four measurements from the exact same instant.
+- **Synchronization result:** 40,000 source rows → **7,601 synchronized rows** (19.00% retained; 32,399 source rows not aligned across all four parameters). The retention is low because the four exports cover different date windows (temperature/pH end 2024-02-04 19:55, conductance ends 2024-02-05 15:00, turbidity ends 2024-02-13 05:10); the synchronized core spans **2024-01-01 00:00Z → 2024-02-04 19:55Z**.
+- A test samples synchronized timestamps and verifies each combined value equals the corresponding source-file value at that same timestamp (no cross-timestamp pairing).
+
+### 3. Sampling Interval & Data Quality (reported, not deleted)
+- **Interval: 5 minutes** (verified, not assumed: 99.5% of inter-observation gaps; median/min = 5 min).
+- **Gaps:** 42 intervals deviate from 5 minutes in the synchronized data (real sensor outages; maximum gap ≈ 2 days 9 h). Gaps are left as gaps — **no synthetic observations are created** (test-enforced: row count must equal the exact timestamp intersection of all four sources).
+- Missing values: 0. Duplicate timestamps/pairs: 0. Physically impossible values: 0 under documented ranges (pH [0, 14]; turbidity ≥ 0; specific conductance ≥ 0; temperature [-5, 45] °C). Unusual but valid storm values (e.g. turbidity up to 591 FNU, conductance up to 4,440 µS/cm) are preserved.
+
+### 4. Historical Feature Engineering (past-only)
+For each of the four measurements: lags 1–3 (e.g. `pH_lag_1`), rolling mean/std over the 3 and 6 observations strictly BEFORE the current row (`shift(1).rolling(w)`, current value excluded, no centered windows — e.g. `turbidity_roll_mean_3`), and recent change (`specific_conductance_change_1` = current − previous). Total: **36 feature columns** + identifiers + target. All features use only observations at or before prediction time; tests corrupt/truncate future rows and prove invariance.
+
+### 5. Deterioration Target (horizon = 1)
+For each row t, the target uses the NEXT synchronized observation t+1 at the same station: `deterioration_target = 1` if turbidity increases by at least 10% (relative) **OR** specific conductance increases by at least 10% (relative, raw uS/cm as reported by USGS) **OR** pH moves more than 0.20 units farther from neutral pH 7. **Temperature never triggers the target.** Rows without a future observation are removed (1 row), never filled with 0.
+
+**The deterioration target is a rule-based future deterioration indicator and does not constitute confirmation of contamination or potability.**
+
+### 6. Chronological Split & Class Distribution (measured)
+Global timestamp boundaries at the 70%/85% quantiles; no shuffling; verified `max(train.ts) < min(val.ts) < max(val.ts) < min(test.ts)`; station identity preserved.
+
+| Split | Rows | Window (UTC) | Deterioration (1) | No deterioration (0) |
+|---|---|---|---|---|
+| train | 5,321 | 01-01 → 01-25 12:40 | 481 (9.04%) | 4,840 (90.96%) |
+| validation | 1,140 | 01-25 12:45 → 01-31 20:50 | 30 (2.63%) | 1,110 (97.37%) |
+| test | 1,139 | 01-31 20:55 → 02-04 19:50 | 27 (2.37%) | 1,112 (97.63%) |
+
+Overall: 538 deterioration (7.08%) vs 7,062 non-deterioration (92.92%) across 7,600 targetable rows. **The class imbalance is significant and reported, not corrected** (no SMOTE/resampling in this phase); deterioration events also cluster in time, so later splits contain fewer events.
+
+### 7. Leakage Prevention
+- Future observations are read (`shift(-1)`, grouped by station) for **label creation only**; no future-shifted value enters any feature column; the target is excluded from the feature contract.
+- Splitting is chronological: later observations never enter training for earlier prediction points.
+- Outputs: `ml/data/processed/usgs_timeseries_combined.csv` plus `forecast_train.csv` / `forecast_validation.csv` / `forecast_test.csv`.
+
+### 8. Limitations
+> [!WARNING]
+> - Single station (~5 weeks of synchronized coverage): limited seasonality; 19% source-row retention due to differing export windows; 42 real gaps left unfilled.
+> - Turbidity records are USGS "Provisional" (subject to revision).
+> - The target is a rule-based indicator tied to this dataset's labeling rule — it does not confirm contamination, pollution, or potability.
+> - The deterioration rule triggers frequently after conductance/turbidity spikes, and events cluster unevenly across the chronological splits (2–9% class share per split).
+
+---
+
+## Phase 5D-2 — XGBoost Future Deterioration Prediction — COMPLETED
+
+Phase 5D-2 trains an `xgboost.XGBClassifier` to predict the Phase 5D-1 **`deterioration_target`** — the rule-based **future deterioration indicator** (1 = deterioration within the next observation of the same station, 0 = none). All metrics below are **measured** from the real USGS dataset (station USGS-01649190; synchronized window 2024-01-01 → 2024-02-04 UTC).
+
+### 1. Dependency
+- `xgboost>=2.0` in `ml/requirements.txt`; installed and verified version: **xgboost 3.2.0**. No other dependencies were added.
+
+### 2. Data, Feature Set & Target
+- **Training data**: `ml/data/processed/forecast_train.csv` ONLY (5,321 rows). Validation (1,140) and test (1,139) splits are never read during fitting; the training script's source is test-guarded against referencing them.
+- **Feature set (36 columns, saved to `ml/data/processed/xgboost_feature_list.txt`)**: the four current measurements (pH, turbidity, temperature, `specific_conductance` — kept distinct from TDS) plus lags 1–3, rolling mean/std (windows 3 and 6, strictly past-only), and recent changes for each parameter. `station` and `timestamp` are metadata, never features; the target and any target-derived column are contract-rejected.
+- **Target**: `deterioration_target` (binary; unchanged from Phase 5D-1). Training distribution: 4,840 non-deterioration (90.96%) vs 481 deterioration (9.04%). No missing target values remained in the training split.
+
+### 3. Model & Class-Imbalance Handling
+| Parameter | Value |
+|---|---|
+| `n_estimators` | 200 |
+| `learning_rate` | 0.05 |
+| `max_depth` | 6 |
+| `subsample` | 0.8 |
+| `colsample_bytree` | 0.8 |
+| `eval_metric` | `logloss` |
+| `random_state` | 42 |
+| `n_jobs` | -1 (consistent across runs) |
+| `scale_pos_weight` | **10.0624** = 4,840 / 481 (`n_negative / n_positive`, computed from the TRAINING split only) |
+
+No SMOTE or resampling was applied. `scale_pos_weight` was chosen over reweighting-free baseline because the positive class is rare (~9% of training rows) and missed deterioration events are the costlier error for an alerting system; the exact value is reported by the training script and stored in the model. Validation/test information was never used to compute training weights.
+
+### 4. Threshold Selection (validation split only)
+Candidates {0.5, 0.4, 0.3, 0.2, 0.15, 0.1} were scanned on the validation split; F1 peaked at threshold **0.2** (F1 0.2577; recall 0.33 → 0.70; balanced accuracy 0.65 → 0.80 vs the 0.5 default). The default 0.5 would be preferred on ties. The test evaluation used this frozen threshold; the test set never influenced the choice.
+
+### 5. Measured Validation Metrics (1,140 rows; 30 deterioration / 1,110 non-deterioration; threshold 0.2)
+- Accuracy 0.8939 (reported for completeness — accuracy alone is misleading under imbalance)
+- Precision 0.1579 | Recall 0.7000 | F1 0.2577
+- Balanced accuracy 0.7995 | ROC-AUC 0.8721
+- Confusion matrix: TN = 998, FP = 112, FN = 9, TP = 21
+
+### 6. FINAL TEST Metrics (1,139 rows; 27 deterioration / 1,112 non-deterioration; frozen threshold 0.2)
+- Accuracy 0.9438 | Precision 0.0698 | Recall 0.1111 | F1 0.0857
+- Balanced accuracy 0.5376 | ROC-AUC 0.6288
+- Confusion matrix: TN = 1,072, FP = 40, FN = 24, TP = 3
+- **Honest observation:** test metrics are substantially weaker than validation (ROC-AUC 0.63 vs 0.87). Deterioration events cluster in time and the validation window contains a richer event mix than the final window, so the model's ability to rank future deterioration degrades on the latest observations. This temporal shift is reported, not tuned away; no test-informed retuning was performed.
+
+### 7. Feature Importance (gain-based)
+Top contributors: `turbidity_roll_std_6` (0.0638), `turbidity` (0.0592), `turbidity_roll_mean_6` (0.0584), `turbidity_change_1` (0.0424), `turbidity_roll_std_3` (0.0417) — turbidity variability/level dominates, followed by pH and specific-conductance rolling statistics. Full ranking: `xgboost_feature_importance.csv` / `.png`. **Importance indicates model contribution/association, not physical causation.**
+
+### 8. Prediction Output & Error Analysis
+- `xgboost_predictions.csv` (1,139 rows): `station, timestamp, pH, turbidity, temperature, specific_conductance, actual_deterioration, predicted_deterioration, prediction_probability`. Probabilities verified numeric within [0, 1]; labels binary 0/1 via the frozen threshold.
+- `xgboost_error_analysis.csv` (64 incorrect predictions: 40 false positives, 24 false negatives). Errors cluster around 2024-02-01 → 2024-02-04 (peaking 2024-02-03), consistent with real storm/spike periods in the window; errors are model mispredictions, **not** confirmed pollution events.
+
+### 9. Persistence & Reproducibility
+- `ml/models/xgboost_deterioration.joblib` saves, loads via joblib, and predicts; in-memory vs loaded predictions AND probabilities are asserted identical.
+- Two trainings with identical data, hyperparameters, seed 42, and n_jobs produce identical predictions, probabilities, and feature importances (verified via `--verify-reproducibility` and in the test suite). No residual nondeterminism was observed.
+
+### 10. Validation & Test Strategy (chronology preserved)
+- Training split → fitting only; validation split → model selection (including threshold); test split → final evaluation exactly once.
+- No shuffling and no random cross-validation anywhere: splits remain chronological and evaluation preserves temporal order.
+
+### 11. Limitations & Model Honesty
+> [!WARNING]
+> - **Single station, ~5 weeks of synchronized data** (USGS-01649190): the model must not be assumed to generalize to other rivers, lakes, borewells, tanks, or regions.
+> - **Limited time coverage**: deterioration events cluster unevenly across the chronological windows, producing the validation→test performance drop documented above.
+> - **Provisional turbidity**: USGS turbidity records are "Provisional" (subject to revision).
+> - **Rule-based target**: the model predicts the Phase 5D-1 **future deterioration indicator**, not confirmed contamination, pollution, guaranteed unsafe water, or universal water-quality prediction.
+> - **Class imbalance**: precision is low at the selected threshold (many false alerts); production use would require threshold/cost recalibration on station-specific data.
+> - **Future need**: additional stations and longer histories are required for robust, generalizable deterioration prediction. No observations were fabricated.
+
+### 12. Phase 5D-2 Commands
+```bash
+# 1. Train (training split only) and save model + importance + feature list
+python ml/scripts/train_xgboost.py
+
+# 2. Select the decision threshold on the VALIDATION split only
+python ml/scripts/evaluate_xgboost.py --select-threshold
+
+# 3. Evaluate on the validation split at the frozen threshold
+python ml/scripts/evaluate_xgboost.py --split validation --threshold 0.2
+
+# 4. FINAL evaluation on the test split (run once, frozen threshold)
+python ml/scripts/evaluate_xgboost.py --split test --threshold 0.2
+
+# 5. Generate test-split predictions + error analysis (frozen threshold)
+python ml/scripts/predict_deterioration.py --threshold 0.2
+
+# Optional: verify training reproducibility (trains twice, compares results)
+python ml/scripts/evaluate_xgboost.py --verify-reproducibility
+
+# Test suite (29 tests; end-to-end on synthetic in-test fixtures)
+python -m pytest ml/tests/test_xgboost_prediction.py -v
+```
+
+---
+
 ## Running Automated Test Suite
 
-Run the full ML test suite (54 tests covering Phase 5A pipeline, Phase 5B Isolation Forest, Phase 5C-1 dataset preparation, and Phase 5C-2 Random Forest classification):
+Run the full ML test suite (122 tests covering Phase 5A pipeline, Phase 5B Isolation Forest, Phase 5C-1 dataset preparation, Phase 5C-2 Random Forest classification, Phase 5D-1 forecasting preparation (USGS), and Phase 5D-2 XGBoost prediction):
 ```bash
 python -m pytest -v ml/tests
 ```
