@@ -523,9 +523,109 @@ python -m pytest ml/tests/test_xgboost_prediction.py -v
 
 ---
 
+## Phase 5E — Explainable AI / SHAP — COMPLETED
+
+> **What SHAP is used for here:** SHAP is used to explain how individual input
+> features contributed to a model prediction. These contributions describe
+> model behavior and should not be interpreted as proof of physical causation.
+
+### 1. Models explained (no retraining, no hyperparameter changes)
+
+| Model | Artifact | Explained on | SHAP explainer |
+|---|---|---|---|
+| Random Forest (Phase 5C-2) | `ml/models/random_forest_classifier.joblib` | `supervised_test.csv` (Phase 5C-1 test split) | `shap.TreeExplainer` (tree path dependent) |
+| XGBoost (Phase 5D-2) | `ml/models/xgboost_deterioration.joblib` | `forecast_test.csv` (Phase 5D-1 final test split) | `shap.TreeExplainer` (Tree SHAP) |
+
+Both models are loaded exactly as persisted and are **never retrained, retuned,
+or modified**. sha256 hashes and predictions/probabilities are captured before
+and after explanation and must be identical (enforced by `--verify-consistency`
+and by tests).
+
+### 2. Dependency
+
+- `shap` 0.48.0, pinned in `ml/requirements.txt` as `shap>=0.48,<0.49`.
+- `numpy` is pinned `numpy<2` (shap 0.49+ requires numpy ≥ 2, which is
+  incompatible with the project's compiled numeric stack).
+- **Compatibility note:** xgboost ≥ 3 serializes the scalar `base_score` as a
+  one-element vector string (e.g. `'[5E-1]'`), which shap ≤ 0.48 cannot parse.
+  `ml/utils/shap_compat.py` normalizes this value in the decoded in-memory
+  representation SHAP reads — the model artifact, its parameters, and its
+  predictions are untouched, and the value is mathematically identical (0.5).
+
+### 3. Random Forest explanation
+
+- Features: exactly the four model inputs (`pH`, `tds`, `turbidity`,
+  `temperature`); positive class for sign convention = **Unsafe**.
+- Global: `shap_random_forest_summary.csv` / `.png` — mean absolute SHAP per
+  feature on a deterministic sample of **500** test observations (seed 42).
+- Local: `shap_random_forest_local.csv` — one Safe, one Unsafe, one correct,
+  and one incorrect prediction (4 rows × 4 features), with actual label,
+  predicted label, prediction probability, feature, and signed SHAP value.
+
+### 4. XGBoost explanation
+
+- Features: exactly the 36 columns of `xgboost_feature_list.txt` (current
+  measurements + lag/rolling/change features); positive class =
+  `deterioration_target = 1`. Station, timestamp, and the target are rejected
+  if present in the feature list.
+- Global: `shap_xgboost_summary.csv` / `.png` — mean absolute SHAP per feature
+  on a deterministic sample of **500** final-test observations (seed 42).
+- Local: `shap_xgboost_local.csv` — one correctly predicted deterioration
+  event, one correctly predicted non-deterioration observation, one false
+  positive, and one false negative (4 rows × 36 features), with station,
+  timestamp, actual/predicted labels, and probability. The predicted labels
+  use the threshold **frozen in Phase 5D-2 (0.2, selected on validation only)**.
+- Missing-target rows (the single end-of-series row with no future
+  observation) are excluded from evaluation-style calculations, never imputed.
+
+### 5. SHAP sign interpretation
+
+- **Positive SHAP value** → pushes the prediction toward the positive class
+  (RF: *Unsafe*; XGBoost: *deterioration*) — for XGBoost, contributions are in
+  the raw log-odds margin space.
+- **Negative SHAP value** → pushes toward the negative class (RF: *Safe*;
+  XGBoost: *no deterioration*).
+- Interpretation was verified against actual model outputs: SHAP additivity
+  (expected value + Σ SHAP contributions) reconstructs the exact model
+  probability (RF) and raw margin (XGBoost) for every explained observation.
+
+### 6. Model-independence verification (before/after SHAP)
+
+Both explanation scripts capture predictions and probabilities for the full
+evaluation split before generating explanations, then recompute them after and
+require bitwise equality; the model file's sha256 must also be unchanged. All
+checks passed for both models.
+
+### 7. Limitations
+
+- SHAP explains **model behavior**, not the environment: contributions must
+  not be read as pollution, contamination, or causal mechanisms.
+- Feature importance/contribution ordering can differ between metrics (SHAP
+  mean |value| vs XGBoost split gain); both are model-internal quantities.
+- XGBoost explanations inherit the Phase 5D-2 limitations: single station,
+  ~5 weeks of synchronized data, provisional turbidity source data, rule-based
+  *future deterioration indicator* target, and class imbalance.
+- Global explanations use a documented 500-observation deterministic sample;
+  local explanations use 4 individually selected observations per model.
+
+### 8. Commands
+
+```bash
+# Random Forest SHAP explanations (global + local + consistency check)
+python ml/scripts/explain_random_forest.py --verify-consistency
+
+# XGBoost SHAP explanations (global + local + consistency check)
+python ml/scripts/explain_xgboost.py --verify-consistency
+
+# Test suite (18 tests)
+python -m pytest ml/tests/test_shap_explainability.py -v
+```
+
+---
+
 ## Running Automated Test Suite
 
-Run the full ML test suite (122 tests covering Phase 5A pipeline, Phase 5B Isolation Forest, Phase 5C-1 dataset preparation, Phase 5C-2 Random Forest classification, Phase 5D-1 forecasting preparation (USGS), and Phase 5D-2 XGBoost prediction):
+Run the full ML test suite (140 tests covering Phase 5A pipeline, Phase 5B Isolation Forest, Phase 5C-1 dataset preparation, Phase 5C-2 Random Forest classification, Phase 5D-1 forecasting preparation (USGS), Phase 5D-2 XGBoost prediction, and Phase 5E SHAP explainability):
 ```bash
 python -m pytest -v ml/tests
 ```

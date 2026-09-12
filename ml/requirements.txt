@@ -1,8 +1,12 @@
 pandas
-numpy
+numpy<2
 scikit-learn
 matplotlib
 joblib
 # Phase 5D-2: XGBoost deterioration prediction
 # Installed & verified: xgboost 3.2.0 (pip install xgboost)
 xgboost>=2.0
+# Phase 5E: SHAP explainability
+# Installed & verified: shap 0.48.0 with numpy 1.26.4 (shap >= 0.49 requires numpy >= 2,
+# which is incompatible with the pinned <2 stack used by pyarrow/matplotlib here)
+shap>=0.48,<0.49
