@@ -1,0 +1,17 @@
+row_index,actual_label,predicted_label,prediction_probability,feature,shap_value
+0,Safe,Safe,0.0,pH,-0.004834775962890022
+0,Safe,Safe,0.0,tds,-0.5922956668840754
+0,Safe,Safe,0.0,turbidity,-0.11194020002392942
+0,Safe,Safe,0.0,temperature,0.0092204444581967
+1,Unsafe,Unsafe,1.0,pH,-0.0045873200444497665
+1,Unsafe,Unsafe,1.0,tds,0.1579581041710202
+1,Unsafe,Unsafe,1.0,turbidity,0.1334173453406083
+1,Unsafe,Unsafe,1.0,temperature,0.013361672120123052
+2,Safe,Safe,0.0,pH,-0.0032608027473755756
+2,Safe,Safe,0.0,tds,-0.48909665748087927
+2,Safe,Safe,0.0,turbidity,-0.08201813180286449
+2,Safe,Safe,0.0,temperature,-0.1254746063815783
+4099,Safe,Unsafe,0.55,pH,-0.005204881417599966
+4099,Safe,Unsafe,0.55,tds,-0.08599453897354291
+4099,Safe,Unsafe,0.55,turbidity,0.15816198725384653
+4099,Safe,Unsafe,0.55,temperature,-0.21681276527540155
