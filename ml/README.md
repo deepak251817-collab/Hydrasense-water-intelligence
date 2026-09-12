@@ -623,6 +623,89 @@ python -m pytest ml/tests/test_shap_explainability.py -v
 
 ---
 
+## Phase 6 — Backend ML Inference — COMPLETED
+
+Phase 6 integrates the **already-trained** live models into the FastAPI
+backend (no retraining, no hyperparameter changes, no dataset changes).
+
+### Live model inputs (do NOT feed TDS to XGBoost)
+
+| Model | Artifact | Exact feature order (training contract) |
+|---|---|---|
+| Isolation Forest (Phase 5B) | `ml/models/isolation_forest.joblib` | `ph`, `turbidity`, `tds`, `temperature` |
+| Random Forest (Phase 5C-2) | `ml/models/random_forest_classifier.joblib` | `pH`, `tds`, `turbidity`, `temperature` |
+
+Features are always assembled as named DataFrames in the exact training order
+(`backend/app/services/ml_service.py` exposes explicit arrays); dictionary or
+memory ordering is never relied on.
+
+The **XGBoost deterioration model (Phases 5D-1/5D-2) is NOT connected to live
+telemetry**: it requires `specific_conductance` plus past-only USGS
+lag/rolling/change features, which live TDS-based IoT telemetry does not
+provide. TDS is never renamed to `specific_conductance` and never converted to
+conductivity. XGBoost remains an **offline USGS time-series analytical model**.
+
+### Inference flow
+
+```
+MQTT → MQTT subscriber → sensor validation (Phase 4 ranges)
+     → PostgreSQL commit (telemetry ingestion first, never blocked by ML)
+     → ML inference (Isolation Forest → Random Forest)
+     → ML columns updated on the same sensor_readings row
+     → API
+```
+
+- ML failure policy: ingestion stays functional; failures are logged; the
+  reading keeps NULL ML fields — **no fabricated prediction is ever stored**.
+- Input validation for ML (Phase 6 section 4): pH [0, 14]; turbidity ≥ 0;
+  tds ≥ 0; temperature [-10, 60] °C (the Phase 5 ML cleaning range).
+  Missing/NaN/infinite/non-numeric/out-of-range values are rejected with clear
+  errors and never silently repaired. A reading valid for telemetry but outside
+  the ML ranges is stored with NULL ML fields.
+- Result structure: `anomaly_label` (0/1; 1 = anomalous condition, normalized
+  from sklearn's native -1 outlier convention), `anomaly_score` (Isolation
+  Forest decision function), `water_quality_label` ("Safe"/"Unsafe"),
+  `safe_probability`/`unsafe_probability` (in [0, 1]), `ml_processed_at`.
+- Startup (`app.main` lifespan): artifacts are verified and loaded once with
+  feature-contract checks; a missing artifact marks the ML service unavailable
+  (clearly logged) and ingestion continues without ML results. No retraining.
+
+### Database and API
+
+- `sensor_readings` gained nullable ML columns via Alembic migration
+  `a1b2c3d4e5f6` (`anomaly_label`, `anomaly_score`, `water_quality_label`,
+  `safe_probability`, `unsafe_probability`, `ml_processed_at`). Pre-ML rows
+  keep NULL (no backfilled values).
+- Authority-only API (existing RBAC enforced):
+  - `GET /api/authority/readings/{reading_id}/analysis` — reading + ML analysis
+  - `GET /api/authority/stations/{station_code}/readings/latest/analysis`
+  ML fields are null when inference did not run. Internal model file paths and
+  model internals are never exposed. Public endpoints return no ML analysis.
+
+### Honest interpretation of live outputs
+
+- Isolation Forest: **"Identifies unusual sensor patterns."**
+- Random Forest: **"Predicts the benchmark dataset's Safe/Unsafe
+  classification."**
+- Neither output is laboratory confirmation, guaranteed safety, guaranteed
+  contamination, or causal pollution detection.
+
+### Tests
+
+- `backend/tests/test_ml_service.py` (25 tests): loading, valid inference, all
+  validation rejections, schemas, probability ranges, explicit feature ordering
+  (permutation changes predictions), missing-model behavior, persistence,
+  repeat consistency.
+- `backend/tests/test_telemetry.py` (+8): normal/deterioration-like/sensor-fault
+  readings, telemetry-valid-but-ML-invalid stored without ML, unknown station
+  and malformed messages unchanged, per-station ML, broker-failure recovery,
+  ML-failure ingestion resilience.
+- `backend/tests/test_ml_api.py` (11): RBAC (authority allowed; product/
+  unauthenticated rejected), invalid ids, NULL-ML readings, valid results,
+  existing-endpoint regression, public-safety.
+
+---
+
 ## Running Automated Test Suite
 
 Run the full ML test suite (140 tests covering Phase 5A pipeline, Phase 5B Isolation Forest, Phase 5C-1 dataset preparation, Phase 5C-2 Random Forest classification, Phase 5D-1 forecasting preparation (USGS), Phase 5D-2 XGBoost prediction, and Phase 5E SHAP explainability):

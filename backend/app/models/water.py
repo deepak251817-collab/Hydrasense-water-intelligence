@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import List, Optional
-from sqlalchemy import String, Text, Float, Boolean, DateTime, ForeignKey, func
+from sqlalchemy import String, Text, Float, Boolean, DateTime, ForeignKey, Integer, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.database import Base
 
@@ -65,6 +65,15 @@ class SensorReading(Base):
     turbidity: Mapped[float] = mapped_column(Float, nullable=False)
     tds: Mapped[float] = mapped_column(Float, nullable=False)
     temperature: Mapped[float] = mapped_column(Float, nullable=False)
+
+    # Phase 6 ML results (nullable: rows predating ML, or where inference
+    # failed/skipped, keep NULL — never fabricated values).
+    anomaly_label: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # 1 = anomalous condition, 0 = normal
+    anomaly_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # Isolation Forest decision function
+    water_quality_label: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # predicted class: Safe/Unsafe
+    safe_probability: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    unsafe_probability: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    ml_processed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
