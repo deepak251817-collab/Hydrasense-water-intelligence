@@ -1,6 +1,9 @@
 pandas
 numpy<2
-scikit-learn
+# Installed & verified: 1.4.2 (pinned after Phase 6: the served model artifacts
+# must load under one sklearn version; all Phase 5A-5E tests pass on 1.4.2,
+# and the backend inference service shares this environment)
+scikit-learn==1.4.2
 matplotlib
 joblib
 # Phase 5D-2: XGBoost deterioration prediction

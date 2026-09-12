@@ -1,12 +1,17 @@
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Tuple, Optional, Any, Dict
 import paho.mqtt.client as mqtt
 
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.models.water import MonitoringStation, SensorReading
+from app.services.ml_service import (
+    MLServiceUnavailableError,
+    MLValidationError,
+    ml_service,
+)
 
 logger = logging.getLogger("hydrasense.mqtt")
 
@@ -65,6 +70,60 @@ def validate_telemetry_payload(data: Dict[str, Any]) -> Tuple[bool, str]:
     return True, "Valid"
 
 
+def attach_ml_results(reading_id: int, ph: float, turbidity: float,
+                      tds: float, temperature: float,
+                      db_session_factory=SessionLocal) -> bool:
+    """Run ML inference for a stored reading and persist the results.
+
+    Failure policy (Phase 6 section 6): ML problems NEVER break telemetry
+    ingestion — the reading is already committed. On any ML failure the
+    reading keeps NULL ML fields (no fabricated prediction is stored) and the
+    error is logged.
+    """
+    db = db_session_factory()
+    try:
+        if not ml_service.is_available:
+            # Attempt a lazy (re)load once; a missing artifact keeps ML off.
+            ml_service.load_models()
+        if not ml_service.is_available:
+            logger.warning(
+                "ML service unavailable; SensorReading id=%s stored without ML results.",
+                reading_id,
+            )
+            return False
+        try:
+            result = ml_service.predict(ph=ph, turbidity=turbidity, tds=tds, temperature=temperature)
+        except MLValidationError as err:
+            logger.warning("Invalid ML input for SensorReading id=%s: %s", reading_id, err)
+            return False
+        except MLServiceUnavailableError as err:
+            logger.warning("ML inference unavailable for SensorReading id=%s: %s", reading_id, err)
+            return False
+        except Exception as err:
+            logger.error("ML inference failed for SensorReading id=%s: %s", reading_id, err, exc_info=True)
+            return False
+
+        reading = db.query(SensorReading).filter(SensorReading.id == reading_id).first()
+        if reading is None:
+            logger.warning("SensorReading id=%s vanished before ML results could be stored.", reading_id)
+            return False
+        reading.anomaly_label = result.anomaly_label
+        reading.anomaly_score = result.anomaly_score
+        reading.water_quality_label = result.water_quality_label
+        reading.safe_probability = result.safe_probability
+        reading.unsafe_probability = result.unsafe_probability
+        reading.ml_processed_at = datetime.now(timezone.utc)
+        db.commit()
+        logger.info("ML results stored for SensorReading id=%s", reading_id)
+        return True
+    except Exception as err:
+        db.rollback()
+        logger.error("Error storing ML results for SensorReading id=%s: %s", reading_id, err, exc_info=True)
+        return False
+    finally:
+        db.close()
+
+
 def process_telemetry_payload(payload_str: str, db_session_factory=SessionLocal) -> bool:
     try:
         data = json.loads(payload_str)
@@ -103,6 +162,19 @@ def process_telemetry_payload(payload_str: str, db_session_factory=SessionLocal)
         db.commit()
         db.refresh(reading)
         logger.info(f"Ingested SensorReading id={reading.id} for station='{station_code}' (pH={reading.ph}, turbidity={reading.turbidity}, tds={reading.tds}, temp={reading.temperature})")
+
+        # Phase 6: ML inference AFTER the reading is safely persisted.
+        # Telemetry ingestion never blocks indefinitely on ML: attach_ml_results
+        # catches every failure and leaves ML fields NULL rather than storing
+        # fabricated predictions.
+        attach_ml_results(
+            reading_id=reading.id,
+            ph=reading.ph,
+            turbidity=reading.turbidity,
+            tds=reading.tds,
+            temperature=reading.temperature,
+            db_session_factory=db_session_factory,
+        )
         return True
     except Exception as e:
         db.rollback()
