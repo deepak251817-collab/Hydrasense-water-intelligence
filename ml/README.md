@@ -19,7 +19,7 @@ This directory contains the Machine Learning data preparation pipeline and Isola
 ml/
 ├── data/
 │   ├── raw/                 # Raw telemetry exported from PostgreSQL (sensor_readings.csv)
-│   ├── processed/           # Cleaned telemetry, chronological splits, anomaly_results.csv, and supervised splits
+│   ├── processed/           # Cleaned telemetry, splits, anomaly results, supervised splits, predictions, plots
 │   └── external/            # External benchmark datasets (water_quality_dataset1.csv)
 │
 ├── preprocessing/
@@ -37,18 +37,23 @@ ml/
 │   ├── detect_anomalies.py         # Generate anomaly_score and anomaly_label (0=normal, 1=anomaly)
 │   ├── evaluate_isolation_forest.py# Unsupervised qualitative evaluation on validation/test splits
 │   ├── inspect_supervised_dataset.py # Phase 5C-1 dataset inspection & validation report
-│   └── prepare_supervised_splits.py  # Phase 5C-1 stratified splitting & leakage verification
+│   ├── prepare_supervised_splits.py  # Phase 5C-1 stratified splitting & leakage verification
+│   ├── train_random_forest.py        # Phase 5C-2 Random Forest model training & feature importance
+│   ├── evaluate_random_forest.py     # Phase 5C-2 validation & test evaluation with error analysis
+│   └── predict_water_quality.py      # Phase 5C-2 test prediction generation & probability outputs
 │
 ├── tests/
 │   ├── __init__.py
 │   ├── test_ml_pipeline.py         # Test suite for ML data preparation pipeline
 │   ├── test_data_leakage.py        # Explicit feature & chronological split leakage tests
 │   ├── test_isolation_forest.py    # Unit & stress tests for Isolation Forest pipeline
-│   └── test_supervised_dataset.py  # Unit & leakage tests for supervised dataset preparation (Phase 5C-1)
+│   ├── test_supervised_dataset.py  # Unit & leakage tests for supervised dataset preparation (Phase 5C-1)
+│   └── test_random_forest.py       # Unit, persistence, reproducibility & leakage tests (Phase 5C-2)
 │
 ├── notebooks/                      # EDA and exploratory work
 ├── models/
-│   └── isolation_forest.joblib     # Persisted Isolation Forest model artifact
+│   ├── isolation_forest.joblib        # Persisted Isolation Forest model artifact
+│   └── random_forest_classifier.joblib# Persisted Random Forest classifier artifact (Phase 5C-2)
 ├── requirements.txt                # Minimal required ML dependencies
 └── README.md
 ```
@@ -205,10 +210,111 @@ python ml/scripts/prepare_supervised_splits.py
 
 ---
 
+## Phase 5C-2 — Random Forest Water-Quality Classification
+
+Phase 5C-2 implements supervised classification using `sklearn.ensemble.RandomForestClassifier` trained strictly on the prepared datasets from Phase 5C-1 (`supervised_train.csv`).
+
+### 1. Dataset & Split Specifications
+- **Training Set**: `ml/data/processed/supervised_train.csv` (70,560 rows: 49,392 Unsafe, 21,168 Safe)
+- **Validation Set**: `ml/data/processed/supervised_validation.csv` (15,120 rows: 10,584 Unsafe, 4,536 Safe)
+- **Final Test Set**: `ml/data/processed/supervised_test.csv` (15,120 rows: 10,584 Unsafe, 4,536 Safe)
+- **Features**: `['pH', 'tds', 'turbidity', 'temperature']`
+- **Target**: `label` (`Safe`, `Unsafe`)
+
+### 2. Model Architecture & Hyperparameters
+- **Estimator**: `sklearn.ensemble.RandomForestClassifier`
+- **Number of Trees (`n_estimators`)**: 100
+- **Max Depth (`max_depth`)**: `None` (unconstrained leaf purity)
+- **Class Weight (`class_weight`)**: `None` (baseline model without artificial reweighting)
+- **Random Seed (`random_state`)**: 42 (deterministic reproducibility)
+- **Parallel Workers (`n_jobs`)**: -1 (all available CPU cores)
+- **Model Artifact Location**: `ml/models/random_forest_classifier.joblib`
+- **Class Distribution & Imbalance Policy**: The training split is 70.00% `Unsafe` / 30.00% `Safe` (imbalance ratio 2.3333:1; validation and test splits are stratified identically). Because the majority-class share is below 60% the imbalance is mild, so the baseline model is trained on the natural distribution WITHOUT class weights, SMOTE, or resampling. `class_weight=balanced` remains available via `--class-weight` if future analysis demonstrates the minority class is under-served.
+
+### 3. Actual Measured Evaluation Metrics
+
+#### Validation Set Metrics (`supervised_validation.csv`, 15,120 rows)
+- **Accuracy**: 0.9999 (15,119 / 15,120 correct)
+- **Macro Precision / Recall / F1**: 0.9999 / 1.0000 / 0.9999
+- **Weighted F1-score**: 0.9999
+- **Class 'Unsafe'**: Precision = 1.0000, Recall = 0.9999, F1 = 1.0000 (Support: 10,584)
+- **Class 'Safe'**: Precision = 0.9998, Recall = 1.0000, F1 = 0.9999 (Support: 4,536)
+- **Confusion Matrix**:
+  - Actual Safe: 4,536 predicted Safe, 0 predicted Unsafe (FP = 0)
+  - Actual Unsafe: 1 predicted Safe, 10,583 predicted Unsafe (FN = 1)
+
+#### Final Test Set Metrics (`supervised_test.csv`, 15,120 rows)
+- **Accuracy**: 0.9999 (15,118 / 15,120 correct)
+- **Macro Precision / Recall / F1**: 0.9998 / 0.9998 / 0.9998
+- **Weighted F1-score**: 0.9999
+- **Class 'Unsafe'**: Precision = 0.9999, Recall = 0.9999, F1 = 0.9999 (Support: 10,584)
+- **Class 'Safe'**: Precision = 0.9998, Recall = 0.9998, F1 = 0.9998 (Support: 4,536)
+- **Confusion Matrix**:
+  - Actual Safe: 4,535 predicted Safe, 1 predicted Unsafe (FP = 1)
+  - Actual Unsafe: 1 predicted Safe, 10,583 predicted Unsafe (FN = 1)
+
+### 4. Feature Importance Ranking
+Saved to `ml/data/processed/random_forest_feature_importance.csv`:
+
+| Rank | Feature | Gini Importance | Share (%) | Scientific Role |
+|---|---|---|---|---|
+| 1 | `tds` | 0.677393 | 67.74% | Primary driver of dissolved ionic concentration |
+| 2 | `turbidity` | 0.253666 | 25.37% | Suspended particulate matter and clarity |
+| 3 | `temperature` | 0.054114 | 5.41% | Biological kinetics and physical solubility |
+| 4 | `pH` | 0.014827 | 1.48% | Acid-base equilibrium |
+
+> [!NOTE]
+> Gini feature importance quantifies mean decrease in node impurity across the decision trees. It reflects statistical split utility within this dataset and does **NOT** prove physical or biochemical causation.
+
+### 5. Error Analysis & Borderline Observations
+Across all 15,120 test observations, only 2 misclassifications occurred (0.013% error rate):
+- **False Positive (Row 4099)**: Actual `Safe`, Predicted `Unsafe` ($P(\text{Unsafe}) = 0.550$). Features: pH=7.39, TDS=204.0 ppm, Turbidity=3.99 NTU, Temp=20.42°C. This sample lies right on the boundary of potable turbidity (< 4 NTU) and TDS (~200 ppm).
+- **False Negative (Row 7556)**: Actual `Unsafe`, Predicted `Safe` ($P(\text{Safe}) = 0.760$). Features: pH=7.05, TDS=192.3 ppm, Turbidity=3.95 NTU, Temp=24.26°C. Near-boundary observation where parameter values closely resemble safe drinking water standards.
+
+### 5.1 Validation Error Analysis
+- **False Negative (Row 13933)**: Actual `Unsafe`, Predicted `Safe` ($P(\text{Safe}) = 0.910$). Features: pH=6.84, TDS=196.7 ppm, Turbidity=3.57 NTU, Temp=26.08°C — another borderline sample near the dataset's Safe/Unsafe boundary.
+
+### 5.2 Model Persistence & Reproducibility (Verified)
+- **Persistence**: The saved artifact at `ml/models/random_forest_classifier.joblib` can be saved, loaded with `joblib`, and used to predict. Predictions and probabilities from the model immediately after training and the model loaded from disk are identical for the same input (verified in `ml/tests/test_random_forest.py`).
+- **Reproducibility**: Two independent full training runs with `random_state=42` on the same training data produced identical feature importances and identical validation predictions/probabilities (verified via `python ml/scripts/evaluate_random_forest.py --split validation --verify-reproducibility`).
+
+### 5.3 Prediction Output (`random_forest_predictions.csv`)
+- Generated by `ml/scripts/predict_water_quality.py` for `supervised_test.csv` (15,120 rows).
+- Columns: `pH`, `tds`, `turbidity`, `temperature`, `actual_label`, `predicted_label`, `probability_safe`, `probability_unsafe`.
+- Probabilities are numeric, bounded within [0, 1], and sum to 1.0 per row (asserted at generation time and in the test suite).
+
+### 6. Limitations & Model Result Honesty
+> [!WARNING]
+> - The Random Forest classifier predicts the specific empirical labeling rules inherent to the benchmark dataset.
+> - High classification accuracy on this benchmark does **NOT** mean the model is "100% accurate", "clinically validated", or "scientifically guaranteed" to identify all real-world contaminants.
+> - Contaminants such as heavy metals, microplastics, pharmaceuticals, and microbial pathogens that do not alter macroscopic pH, TDS, turbidity, or temperature cannot be detected by these four sensors alone.
+> - Reported metrics are empirical results on this benchmark's stratified test split; real-world performance depends on the source dataset, the definition of the `Safe`/`Unsafe` label, sensor parameter quality, and how closely future data matches this distribution.
+
+### 7. Phase 5C-2 Commands
+```bash
+# 1. Train Random Forest model and generate feature importances + plot
+python ml/scripts/train_random_forest.py
+
+# 2. Evaluate model on validation set
+python ml/scripts/evaluate_random_forest.py --split validation
+
+# 3. Final evaluation on test set (produces confusion_matrix.png)
+python ml/scripts/evaluate_random_forest.py --split test
+
+# 4. Generate test set predictions with probabilities
+python ml/scripts/predict_water_quality.py
+
+# Optional: verify training reproducibility (trains twice, compares results)
+python ml/scripts/evaluate_random_forest.py --split validation --verify-reproducibility
+```
+
+---
+
 ## Running Automated Test Suite
 
-Run the full ML test suite (40 tests covering Phase 5A pipeline, Phase 5B Isolation Forest, and Phase 5C-1 supervised dataset):
+Run the full ML test suite (54 tests covering Phase 5A pipeline, Phase 5B Isolation Forest, Phase 5C-1 dataset preparation, and Phase 5C-2 Random Forest classification):
 ```bash
 python -m pytest -v ml/tests
 ```
+
 
