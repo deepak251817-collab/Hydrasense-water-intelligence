@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { 
   mockWaterSources, 
   mockAlerts, 
@@ -11,6 +11,10 @@ import WaterTrendChart from "../../components/authority/WaterTrendChart";
 import PredictionCard from "../../components/authority/PredictionCard";
 import AlertPanel from "../../components/authority/AlertPanel";
 import SensorHealth from "../../components/authority/SensorHealth";
+import MlSummaryCard from "../../components/authority/MlSummaryCard";
+import type { MonitoringStation } from "../../lib/api";
+import { authorityApi } from "../../lib/api";
+import { getToken } from "../../lib/auth";
 import { 
   Droplets, 
   ShieldAlert, 
@@ -37,6 +41,20 @@ export default function CommandCenter() {
 
   const activeAlertsCount = alerts.filter((a) => !a.acknowledged).length;
   const criticalSourcesCount = mockWaterSources.filter((s) => s.risk === "Critical").length;
+
+  // Phase 7: ML summary uses ONLY backend station data (no fabricated aggregates).
+  const [backendStations, setBackendStations] = useState<MonitoringStation[]>([]);
+
+  useEffect(() => {
+    const token = getToken();
+    if (!token) return;
+    authorityApi
+      .getAllStations(token)
+      .then((data: MonitoringStation[]) => setBackendStations(data))
+      .catch(() => {
+        // Degrade gracefully: the ML summary renders its own empty state.
+      });
+  }, []);
 
   return (
     <div className="space-y-6">
@@ -111,6 +129,9 @@ export default function CommandCenter() {
           accentColor="emerald"
         />
       </div>
+
+      {/* ML Analysis Summary (backend data only — Phase 7) */}
+      <MlSummaryCard stations={backendStations} />
 
       {/* Analytics & Prediction Grid */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">

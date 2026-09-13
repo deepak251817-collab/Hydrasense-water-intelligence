@@ -38,10 +38,12 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
+import MlLatestCard from "../../components/authority/MlLatestCard";
 
 type Section =
   | "overview"
   | "readings"
+  | "analysis"
   | "trends"
   | "ai"
   | "health"
@@ -56,8 +58,9 @@ type Section =
 const SECTIONS: { id: Section; label: string; icon: React.ElementType }[] = [
   { id: "overview",    label: "Overview",          icon: Activity },
   { id: "readings",   label: "Live Readings",      icon: Droplets },
+  { id: "analysis",   label: "AI Analysis",         icon: Brain },
   { id: "trends",     label: "Historical Trends",  icon: BarChart2 },
-  { id: "ai",         label: "AI Insights",        icon: Brain },
+  { id: "ai",         label: "AI Insights (Preview)", icon: Sparkles },
   { id: "health",     label: "Sensor Health",      icon: ShieldCheck },
   { id: "nearby",     label: "Nearby Stations",    icon: MapPin },
   { id: "alerts",     label: "Alerts",             icon: Bell },
@@ -215,6 +218,13 @@ export default function StationDetail() {
           </div>
         )}
 
+        {/* 2b. AI Analysis — real backend ML results (Phase 7) */}
+        {activeSection === "analysis" && (
+          <div className="space-y-4 animate-in fade-in duration-300">
+            <MlLatestCard stationCode={stationId ?? null} />
+          </div>
+        )}
+
         {/* 3. Historical Trends */}
         {activeSection === "trends" && (
           <div className="space-y-6 animate-in fade-in duration-300">
@@ -266,9 +276,11 @@ export default function StationDetail() {
               <div className="flex items-start gap-3 text-sm text-slate-500">
                 <Info className="h-5 w-5 shrink-0 text-slate-400 mt-0.5" />
                 <p>
-                  AI Insights are currently placeholder mock content. The HydraSense AI prediction engine will be integrated in Phase 2,
-                  incorporating real-time sensor telemetry, historical regression analysis, and weather correlation data.
-                  No actual pollution source detection or certified quality determination is made by this module.
+                  AI Insights below are illustrative preview content only — they are not model
+                  outputs. Real machine-learning results (predicted water-quality class and anomaly
+                  status from the backend ML pipeline) are shown in the separate "AI Analysis"
+                  section. No actual pollution source detection or certified quality determination
+                  is made by this module.
                 </p>
               </div>
             </div>
