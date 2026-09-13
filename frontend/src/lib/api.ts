@@ -144,6 +144,47 @@ export interface WaterSourceResponse {
   created_at: string;
 }
 
+/**
+ * ML analysis for a single sensor reading (Phase 6 backend schema: MLAnalysisResponse).
+ *
+ * All fields are nullable: readings ingested before ML integration (or when the
+ * ML service was unavailable) legitimately have NULL ML columns.
+ *
+ * Honesty (matches backend wording):
+ * - `anomaly_label` = 1 marks an *anomalous condition* (unusual sensor pattern)
+ *   identified by the Isolation Forest; 0 = normal pattern.
+ * - `water_quality_label` is the Random Forest *predicted water-quality class*
+ *   ("Safe" / "Unsafe") on the benchmark dataset.
+ * Neither is laboratory confirmation, guaranteed safety, guaranteed
+ * contamination, or causal pollution detection.
+ */
+export interface MLAnalysis {
+  anomaly_label: number | null; // 1 = anomalous condition, 0 = normal pattern
+  anomaly_score: number | null; // Isolation Forest decision function (higher = more typical)
+  water_quality_label: string | null; // predicted water-quality class: "Safe" | "Unsafe"
+  safe_probability: number | null; // in [0, 1]
+  unsafe_probability: number | null; // in [0, 1]
+  ml_processed_at: string | null; // ISO datetime; null = not processed
+}
+
+/**
+ * Authority payload: sensor reading information + ML analysis
+ * (Phase 6 backend schema: ReadingAnalysisResponse).
+ */
+export interface ReadingAnalysisResponse {
+  reading_id: number;
+  station_id: number;
+  station_code: string;
+  device_id: string;
+  timestamp: string;
+  created_at: string;
+  ph: number;
+  turbidity: number;
+  tds: number;
+  temperature: number;
+  ml: MLAnalysis;
+}
+
 export interface MonitoringStation {
   id: number;
   station_code: string;
@@ -191,4 +232,35 @@ export const authorityApi = {
 
   getAllStations: (token: string) =>
     apiGetAuth<MonitoringStation[]>("/authority/stations", token),
+
+  /** ML analysis for a specific sensor reading (authority-only). */
+  getReadingAnalysis: (readingId: number, token: string) =>
+    apiGetAuth<ReadingAnalysisResponse>(
+      `/authority/readings/${readingId}/analysis`,
+      token
+    ),
+
+  /** Latest sensor reading for a station plus its ML analysis (authority-only). */
+  getLatestStationAnalysis: (stationCode: string, token: string) =>
+    apiGetAuth<ReadingAnalysisResponse>(
+      `/authority/stations/${stationCode}/readings/latest/analysis`,
+      token
+    ),
 };
+
+/**
+ * True when the reading's ML analysis actually ran (all result fields present).
+ * Readings processed before Phase 6 — or while the ML service was unavailable —
+ * have NULL ML columns and must render as "Analysis unavailable", never as
+ * fabricated "Normal"/"Safe" defaults.
+ */
+export function hasMLAnalysis(ml: MLAnalysis | null | undefined): boolean {
+  if (!ml) return false;
+  return (
+    ml.anomaly_label !== null &&
+    ml.anomaly_score !== null &&
+    ml.water_quality_label !== null &&
+    ml.safe_probability !== null &&
+    ml.unsafe_probability !== null
+  );
+}

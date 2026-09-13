@@ -706,6 +706,91 @@ MQTT → MQTT subscriber → sensor validation (Phase 4 ranges)
 
 ---
 
+## Phase 7 — Frontend ML Integration — COMPLETED
+
+This phase connects the **existing** Phase 6 backend ML APIs to the frontend
+authority UI. No models were retrained, no feature sets/thresholds changed, no
+new ML logic added — the frontend only consumes and renders backend results.
+
+### API endpoints consumed
+
+- `GET /api/authority/readings/{id}/analysis` — per-reading ML analysis
+- `GET /api/authority/stations/{code}/readings/latest/analysis` — latest
+  reading + ML analysis for a station
+
+The typed client lives in `frontend/src/lib/api.ts` (`MLAnalysis`,
+`ReadingAnalysisResponse`, `authorityApi.getReadingAnalysis`,
+`authorityApi.getLatestStationAnalysis`, and the `hasMLAnalysis` guard).
+`frontend/src/lib/useLatestAnalysis.ts` is the shared fetching hook.
+
+### Where ML results appear (authority only)
+
+- **Station Detail** (`/authority/stations/:code`) — new "AI Analysis" section
+  (`MlLatestCard` → `MlAnalysisSection`): predicted water-quality class,
+  anomaly status, anomaly score, Safe/Unsafe probabilities, analysis footer.
+  The separate "AI Insights" mock panel is now explicitly labelled "(Preview)"
+  and described as non-model content.
+- **Live Monitoring** (`/authority/monitoring`) — "ML Analysis — Latest
+  Reading" panel (`MlIndicator`): current predicted class, anomaly status and
+  anomaly score for the selected backend station. The simulated telemetry
+  board above it is unchanged and clearly separate.
+- **Command Center** (`/authority`) — "AI Analysis Summary" card
+  (`MlSummaryCard`): anomalous stations, unsafe predictions, and how many
+  stations were analysed. Values are computed **only** from the per-station
+  analysis endpoints; stations without analysis are listed as "not analysed"
+  rather than counted as normal. No aggregate endpoint was created and no
+  numbers are fabricated.
+
+### Handling of missing analysis (no fabricated defaults)
+
+Readings ingested before Phase 6 (or while the ML service was unavailable)
+legitimately have NULL ML columns. The UI therefore has explicit states:
+**loading**, **success**, **"Analysis unavailable"** (no result / 404 / NULL ML
+columns), **error** (network/5xx), and **unauthorized** (401/403). A missing
+analysis never renders as "Normal" or "Safe".
+
+### RBAC boundaries
+
+ML analysis UI and data are authority-only. Product users and anonymous
+visitors receive the unauthorized state in the UI, and the backend endpoints
+enforce 401/403 (verified live). Public QR/source pages expose no anomaly
+scores, probabilities, or detailed AI outputs; the existing public source
+functionality is unchanged.
+
+### Data-honesty wording (same language as the backend)
+
+- "Anomalous condition" / "Normal condition" — Isolation Forest unusual-pattern
+  indicator, never confirmed contamination or pollution.
+- "Safe (predicted)" / "Unsafe (predicted)" — the Random Forest predicted
+  water-quality class on its benchmark dataset, never laboratory confirmation
+  or guaranteed safety.
+- Every ML panel states that the values are model outputs, not laboratory
+  confirmation of contamination or guaranteed water safety.
+
+### Frontend tests
+
+`npm test` runs `frontend/src/test/ml-integration.test.tsx` (vitest +
+@testing-library/react; 25 tests): ML data rendering, Safe/Unsafe states,
+Normal/Anomalous states, probability formatting, "Analysis unavailable" for
+missing ML, API-failure state, unauthorized state exposing no data, public-page
+ML restriction, existing station-detail/map/navigation regressions, and the
+honesty-wording guards.
+
+### Limitations
+
+- ML results exist only for readings processed after Phase 6; the summary
+  therefore shows a mixed analysed/not-analysed fleet.
+- Anomaly scores are Isolation Forest decision-function values (higher = more
+  typical); their scale is model-specific and not calibrated to a physical
+  pollution index.
+- The predicted class reflects the Phase 5C-2 benchmark dataset, whose labels
+  and parameter quality bound what the UI can honestly claim.
+- SHAP/explanation data is intentionally not shown: no explanation API exists,
+  and none was invented in this phase (frontend structure is ready to consume
+  one when provided).
+
+---
+
 ## Running Automated Test Suite
 
 Run the full ML test suite (140 tests covering Phase 5A pipeline, Phase 5B Isolation Forest, Phase 5C-1 dataset preparation, Phase 5C-2 Random Forest classification, Phase 5D-1 forecasting preparation (USGS), Phase 5D-2 XGBoost prediction, and Phase 5E SHAP explainability):
