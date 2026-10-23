@@ -231,6 +231,121 @@ describe("TelemetryStatusCard — relative turbidity", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows a loading state until the first response arrives", async () => {
+    const pending: Array<() => void> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) =>
+        new Promise((resolve) => {
+          const url = String(input);
+          pending.push(() =>
+            resolve({
+              ok: true,
+              status: 200,
+              json: async () =>
+                url.includes("/readings/latest") ? makeLatest() : [makeRow()],
+            })
+          );
+        })
+      )
+    );
+    render(<TelemetryStatusCard stationCode="ARK-001" />);
+
+    expect(screen.getByText("Loading the latest telemetry…")).toBeInTheDocument();
+    expect(screen.getByTestId("telemetry-link-status")).toHaveTextContent("Loading");
+
+    await waitFor(() => expect(pending.length).toBeGreaterThan(0));
+    pending.forEach((release) => release());
+    await waitFor(() =>
+      expect(screen.getByTestId("telemetry-link-status")).toHaveTextContent("Online")
+    );
+  });
+
+  it("explains when the station has no readings yet (404)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve({
+          ok: false,
+          status: 404,
+          json: async () => ({ detail: "No sensor readings found" }),
+        })
+      )
+    );
+    render(<TelemetryStatusCard stationCode="ARK-001" />);
+
+    expect(
+      await screen.findByText("No readings received for this station yet.")
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("telemetry-link-status")).toHaveTextContent("No data");
+  });
+
+  it("handles unauthorized access without leaking readings", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve({
+          ok: false,
+          status: 403,
+          json: async () => ({ detail: "Forbidden" }),
+        })
+      )
+    );
+    render(<TelemetryStatusCard stationCode="ARK-001" />);
+
+    expect(
+      await screen.findByText(/not authorized to view hardware telemetry/)
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("telemetry-link-status")).toHaveTextContent(
+      "Unauthorized"
+    );
+    expect(screen.queryByTestId("telemetry-source")).not.toBeInTheDocument();
+  });
+
+  it("shows an error state when the backend is unreachable", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new TypeError("Failed to fetch")))
+    );
+    render(<TelemetryStatusCard stationCode="ARK-001" />);
+
+    expect(await screen.findByText(/Network error/)).toBeInTheDocument();
+    expect(screen.getByTestId("telemetry-link-status")).toHaveTextContent("Error");
+  });
+
+  it("requests the selected station's readings (not another station's)", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      const body = url.includes("/readings/latest") ? makeLatest() : [makeRow()];
+      return Promise.resolve({ ok: true, status: 200, json: async () => body });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<TelemetryStatusCard stationCode="ARK-002" />);
+
+    await waitFor(() => expect(screen.getByText("68.2")).toBeInTheDocument());
+    const urls = fetchMock.mock.calls.map((call) => String(call[0]));
+    expect(
+      urls.some((url) => url.includes("/authority/stations/ARK-002/readings/latest"))
+    ).toBe(true);
+    expect(urls.some((url) => url.includes("ARK-001"))).toBe(false);
+  });
+
+  it("distinguishes simulated readings from physical hardware", async () => {
+    mockApi(makeLatest(), [makeRow()]);
+    const { unmount } = render(<TelemetryStatusCard stationCode="ARK-001" />);
+    expect(await screen.findByTestId("telemetry-source")).toHaveTextContent(
+      "Physical hardware (ESP32)"
+    );
+    unmount();
+
+    mockApi(
+      makeLatest({ source: "simulator", turbidity_unit: "ntu", turbidity_status: null }),
+      []
+    );
+    render(<TelemetryStatusCard stationCode="ARK-001" />);
+    expect(await screen.findByTestId("telemetry-source")).toHaveTextContent("Simulated");
+  });
+
   it("renders a stale reading with the Stale link badge", async () => {
     const stale = new Date(Date.now() - 60_000).toISOString();
     mockApi(makeLatest({ timestamp: stale }), [makeRow({ timestamp: stale })]);

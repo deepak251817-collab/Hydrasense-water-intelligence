@@ -39,7 +39,14 @@ const HISTORY_POINTS = 30;
 const TURBIDITY_UNIT_RELATIVE = "relative_index_0_100";
 const TURBIDITY_BANDS = ["CLEARER", "MODERATE", "CLOUDIER"] as const;
 
-type LinkStatus = "online" | "stale" | "offline" | "no-data" | "unauthorized" | "error";
+type LinkStatus =
+  | "loading"
+  | "online"
+  | "stale"
+  | "offline"
+  | "no-data"
+  | "unauthorized"
+  | "error";
 type HistoryStatus = "loading" | "ready" | "empty" | "error";
 
 /**
@@ -155,14 +162,18 @@ export default function TelemetryStatusCard({ stationCode }: TelemetryStatusCard
 
 function TelemetryStatusPanel({ stationCode }: TelemetryStatusCardProps) {
   const [reading, setReading] = useState<LatestReading | null>(null);
-  const [status, setStatus] = useState<LinkStatus>("no-data");
+  const [status, setStatus] = useState<LinkStatus>("loading");
   const [message, setMessage] = useState<string | null>(null);
   const [history, setHistory] = useState<StationReading[]>([]);
   const [historyStatus, setHistoryStatus] = useState<HistoryStatus>("loading");
   const timerRef = useRef<number | null>(null);
 
   const fetchLatest = useCallback(async () => {
-    if (!stationCode) return;
+    if (!stationCode) {
+      setStatus("no-data");
+      setMessage("Select a station to view hardware telemetry.");
+      return;
+    }
     const token = getToken();
     if (!token) {
       setStatus("unauthorized");
@@ -254,17 +265,19 @@ function TelemetryStatusPanel({ stationCode }: TelemetryStatusCardProps) {
   }));
 
   const linkBadge =
-    status === "online"
-      ? { cls: "bg-emerald-50 text-emerald-700 border-emerald-200", label: "Online" }
-      : status === "stale"
-        ? { cls: "bg-amber-50 text-amber-700 border-amber-200", label: "Stale" }
-        : status === "offline"
-          ? { cls: "bg-red-50 text-red-700 border-red-200", label: "Offline" }
-          : status === "no-data"
-            ? { cls: "bg-slate-50 text-slate-600 border-slate-200", label: "No data" }
-            : status === "unauthorized"
-              ? { cls: "bg-amber-50 text-amber-700 border-amber-200", label: "Unauthorized" }
-              : { cls: "bg-red-50 text-red-700 border-red-200", label: "Error" };
+    status === "loading"
+      ? { cls: "bg-slate-50 text-slate-600 border-slate-200", label: "Loading" }
+      : status === "online"
+        ? { cls: "bg-emerald-50 text-emerald-700 border-emerald-200", label: "Online" }
+        : status === "stale"
+          ? { cls: "bg-amber-50 text-amber-700 border-amber-200", label: "Stale" }
+          : status === "offline"
+            ? { cls: "bg-red-50 text-red-700 border-red-200", label: "Offline" }
+            : status === "no-data"
+              ? { cls: "bg-slate-50 text-slate-600 border-slate-200", label: "No data" }
+              : status === "unauthorized"
+                ? { cls: "bg-amber-50 text-amber-700 border-amber-200", label: "Unauthorized" }
+                : { cls: "bg-red-50 text-red-700 border-red-200", label: "Error" };
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs" data-testid="telemetry-status">
@@ -283,7 +296,9 @@ function TelemetryStatusPanel({ stationCode }: TelemetryStatusCardProps) {
             className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${linkBadge.cls}`}
             data-testid="telemetry-link-status"
           >
-            {status === "online" || status === "stale" ? (
+            {status === "loading" ? (
+              <RefreshCw className="h-3 w-3 animate-spin" />
+            ) : status === "online" || status === "stale" ? (
               <Wifi className="h-3 w-3" />
             ) : (
               <WifiOff className="h-3 w-3" />
@@ -301,7 +316,10 @@ function TelemetryStatusPanel({ stationCode }: TelemetryStatusCardProps) {
         </div>
       </div>
 
-      {(status === "unauthorized" || status === "error" || status === "no-data") && (
+      {(status === "loading" ||
+        status === "unauthorized" ||
+        status === "error" ||
+        status === "no-data") && (
         <p
           className={`mt-4 text-sm rounded-xl p-4 ${
             status === "error"
@@ -309,7 +327,7 @@ function TelemetryStatusPanel({ stationCode }: TelemetryStatusCardProps) {
               : "text-slate-500 bg-slate-50 border border-slate-100"
           }`}
         >
-          {message}
+          {status === "loading" ? "Loading the latest telemetry…" : message}
         </p>
       )}
 

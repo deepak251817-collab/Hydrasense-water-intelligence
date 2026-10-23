@@ -899,3 +899,146 @@ def test_api_exposes_turbidity_unit_and_status(
     rows = history.json()
     assert rows[0]["turbidity_unit"] == "relative_index_0_100"
     assert rows[0]["turbidity_status"] == "CLOUDIER"
+
+# ---------------------------------------------------------------------------
+# MQTT integration hardening: parser edge cases, subscriber contract and
+# callback resilience (no broker required).
+# ---------------------------------------------------------------------------
+# 30. Valid JSON that is not an object is rejected without crashing.
+@pytest.mark.parametrize("payload", ["[]", "\"just a string\"", "null", "42", "true"])
+def test_non_object_json_payload_rejected(db_session, seeded_stations, payload):
+    assert process_telemetry_payload(payload, db_session_factory=lambda: db_session) is False
+    assert db_session.query(SensorReading).count() == 0
+
+
+# 31. Every required field is enforced (missing -> rejected, nothing stored).
+@pytest.mark.parametrize("missing", [
+    "station_code", "device_id", "timestamp", "pH", "turbidity", "tds", "temperature",
+])
+def test_missing_required_field_rejected(db_session, seeded_stations, missing):
+    payload = {
+        "station_code": "ARK-001",
+        "device_id": "STATION-ARK-001",
+        "timestamp": "2026-10-25T08:00:00Z",
+        "pH": 7.1,
+        "turbidity": 4.2,
+        "tds": 205.0,
+        "temperature": 25.0,
+    }
+    payload.pop(missing)
+    ok, reason = validate_telemetry_payload(payload)
+    assert ok is False and missing in reason
+    assert process_telemetry_payload(
+        json.dumps(payload), db_session_factory=lambda: db_session
+    ) is False
+    assert db_session.query(SensorReading).count() == 0
+
+
+# 32. Non-numeric sensor values (string/dict/list/bool) are rejected.
+@pytest.mark.parametrize("field,value", [
+    ("pH", "not-a-number"),
+    ("turbidity", {"value": 4.0}),
+    ("tds", [200]),
+    ("temperature", True),
+])
+def test_non_numeric_sensor_value_rejected(db_session, seeded_stations, field, value):
+    payload = {
+        "station_code": "ARK-001",
+        "device_id": "STATION-ARK-001",
+        "timestamp": "2026-10-25T08:00:03Z",
+        "pH": 7.1,
+        "turbidity": 4.2,
+        "tds": 205.0,
+        "temperature": 25.0,
+    }
+    payload[field] = value
+    ok, _reason = validate_telemetry_payload(payload)
+    assert ok is False
+    assert process_telemetry_payload(
+        json.dumps(payload), db_session_factory=lambda: db_session
+    ) is False
+    assert db_session.query(SensorReading).count() == 0
+
+
+# 33. Timestamp handling: bad formats rejected, UTC offsets accepted.
+def test_timestamp_formats(db_session, seeded_stations):
+    base = {
+        "station_code": "ARK-001",
+        "device_id": "STATION-ARK-001",
+        "pH": 7.0,
+        "turbidity": 4.0,
+        "tds": 200.0,
+        "temperature": 25.0,
+    }
+    for bad_ts in ["not-a-date", "2026-10-25", "", None, 12345]:
+        payload = dict(base, timestamp=bad_ts)
+        assert process_telemetry_payload(
+            json.dumps(payload), db_session_factory=lambda: db_session
+        ) is False
+    assert db_session.query(SensorReading).count() == 0
+
+    # ISO-8601 with an explicit offset must be accepted.
+    payload = dict(base, timestamp="2026-10-25T13:30:00+05:30")
+    assert process_telemetry_payload(
+        json.dumps(payload), db_session_factory=lambda: db_session
+    ) is True
+    reading = db_session.query(SensorReading).first()
+    assert reading is not None
+    assert reading.timestamp.year == 2026 and reading.timestamp.hour == 13
+
+
+# 34. Subscriber contract: topic pattern + QoS 1 subscription.
+def test_subscriber_topic_pattern_and_subscription(db_session):
+    from app.services.mqtt_service import MQTTSubscriberService
+
+    service = MQTTSubscriberService(db_session_factory=lambda: db_session)
+    assert service.topic == "hydrasense/stations/+/telemetry"
+
+    calls = {}
+
+    def fake_subscribe(topic, qos=0):
+        calls["topic"] = topic
+        calls["qos"] = qos
+        return (0, 1)
+
+    service.client.subscribe = fake_subscribe
+    service.client.on_connect(service.client, None, None, 0)
+    assert calls["topic"] == "hydrasense/stations/+/telemetry"
+    assert calls["qos"] == 1
+    assert service.is_connected is True
+
+
+# 35. The on_message callback ingests valid payloads and swallows bad ones.
+def test_on_message_callback_ingests_and_survives_bad_payloads(db_session, seeded_stations):
+    from app.services.mqtt_service import MQTTSubscriberService
+
+    service = MQTTSubscriberService(db_session_factory=lambda: db_session)
+
+    class Msg:
+        topic = "hydrasense/stations/ARK-001/telemetry"
+
+        def __init__(self, payload: bytes):
+            self.payload = payload
+
+    # Malformed JSON must not raise out of the callback.
+    service.client.on_message(service.client, None, Msg(b"{not json"))
+    assert db_session.query(SensorReading).count() == 0
+
+    good = json.dumps({
+        "station_code": "ARK-001",
+        "device_id": "ESP32-HS-001",
+        "timestamp": "2026-10-25T08:10:00Z",
+        "pH": None,
+        "turbidity": 42.0,
+        "turbidity_unit": "relative_index_0_100",
+        "turbidity_status": "MODERATE",
+        "tds": None,
+        "temperature": 27.0,
+        "source": "esp32",
+    }).encode("utf-8")
+    service.client.on_message(service.client, None, Msg(good))
+    reading = db_session.query(SensorReading).filter(SensorReading.device_id == "ESP32-HS-001").first()
+    assert reading is not None
+    assert reading.source == "esp32"
+    assert reading.turbidity_unit == "relative_index_0_100"
+    assert reading.turbidity_status == "MODERATE"

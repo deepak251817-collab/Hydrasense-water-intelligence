@@ -92,6 +92,11 @@ def parse_turbidity_meta(data: Dict[str, Any]) -> Tuple[Optional[str], Optional[
 def parse_timestamp(ts_str: Any) -> Optional[datetime]:
     if not isinstance(ts_str, str):
         return None
+    # A date alone ("2026-10-25") is valid ISO-8601 but not a telemetry
+    # timestamp: every reading would collapse onto midnight and look like a
+    # duplicate. Require a time component.
+    if "T" not in ts_str and " " not in ts_str:
+        return None
     try:
         # Handle ISO-8601 string (e.g. '2026-08-31T23:00:00Z' or with offset)
         if ts_str.endswith('Z'):
@@ -143,6 +148,10 @@ def validate_telemetry_payload(data: Dict[str, Any]) -> Tuple[bool, str]:
         value = data[field]
         if value is None:
             continue
+        # JSON booleans are not measurements (bool is an int subclass, so
+        # float(True) would otherwise be accepted as 1.0).
+        if isinstance(value, bool):
+            return False, f"Non-numeric value provided for {field}"
         try:
             numeric = float(value)
         except (ValueError, TypeError):
