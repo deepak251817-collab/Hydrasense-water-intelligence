@@ -72,6 +72,17 @@ class SensorReading(Base):
     tds: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     temperature: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
+    # Turbidity unit for THIS row. "relative_index_0_100" = ESP32 live
+    # PROVISIONAL relative index (0-100, higher = cloudier — never NTU);
+    # "ntu" = simulated/legacy NTU-style value; NULL = unit unknown (rows
+    # predating unit tracking). Consumers must never assume NTU: a row whose
+    # unit is NULL or relative_index_0_100 must not be read as NTU.
+    turbidity_unit: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+
+    # Firmware-reported relative status band (CLEARER / MODERATE / CLOUDIER)
+    # for relative-index rows; NULL when not reported or not applicable.
+    turbidity_status: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+
     # Telemetry provenance: "simulator" (Python simulator / seeded demo data)
     # or "esp32" (physical station hardware). Keeps simulated and physical
     # readings distinguishable in every query.

@@ -104,6 +104,9 @@ class SensorSimulator:
             "timestamp": now_iso,
             "pH": ph,
             "turbidity": turbidity,
+            # The simulator models NTU-style turbidity (unlike the ESP32's
+            # relative index 0-100), so it states its unit explicitly.
+            "turbidity_unit": "ntu",
             "tds": tds,
             "temperature": temperature,
         }

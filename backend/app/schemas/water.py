@@ -57,6 +57,12 @@ class LatestSensorReadingResponse(BaseModel):
     # never "safe"/"normal". Hardware raw data travels in `diagnostics`.
     pH: Optional[float] = None
     turbidity: Optional[float] = None
+    # Unit of `turbidity` for this reading: "relative_index_0_100" (ESP32
+    # provisional 0-100 index, higher = cloudier, NOT NTU), "ntu" (simulated
+    # NTU-style value) or None = unknown. Never assume NTU.
+    turbidity_unit: Optional[str] = None
+    # Firmware-reported band: CLEARER / MODERATE / CLOUDIER (relative index only).
+    turbidity_status: Optional[str] = None
     tds: Optional[float] = None
     temperature: Optional[float] = None
     source: str = "simulator"
@@ -74,6 +80,10 @@ class SensorReadingResponse(BaseModel):
     # NULL = no honest measurement yet (uncalibrated sensor or sensor fault).
     pH: Optional[float] = None
     turbidity: Optional[float] = None
+    # "relative_index_0_100" | "ntu" | None (unknown) — never assume NTU.
+    turbidity_unit: Optional[str] = None
+    # CLEARER / MODERATE / CLOUDIER for relative-index rows, else None.
+    turbidity_status: Optional[str] = None
     tds: Optional[float] = None
     temperature: Optional[float] = None
     source: str = "simulator"

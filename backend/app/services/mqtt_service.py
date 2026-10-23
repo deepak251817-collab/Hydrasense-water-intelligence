@@ -24,6 +24,70 @@ SOURCE_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,20}$")
 # Keeps a misbehaving device from bloating rows; real payloads are ~500 bytes.
 DIAGNOSTICS_MAX_CHARS = 8192
 
+# ---- Turbidity unit contract -------------------------------------------------
+# ESP32 hardware publishes a PROVISIONAL RELATIVE INDEX 0-100 (higher =
+# cloudier) which is NOT NTU. The simulator publishes NTU-style values. The
+# unit travels either as a top-level `turbidity_unit` field or inside
+# `diagnostics.turbidity.unit` (current firmware). Rows with no unit are
+# stored with turbidity_unit=NULL (unknown) — never silently treated as NTU
+# or as a relative index.
+TURBIDITY_UNIT_RELATIVE = "relative_index_0_100"
+TURBIDITY_UNIT_NTU = "ntu"
+TURBIDITY_UNIT_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{1,32}$")
+TURBIDITY_STATUS_BANDS = ("CLEARER", "MODERATE", "CLOUDIER")
+
+
+def parse_turbidity_meta(data: Dict[str, Any]) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """Extract and validate the turbidity unit/status for a payload.
+
+    Sources, in order: top-level `turbidity_unit` / `turbidity_status`, then
+    `diagnostics.turbidity.unit` / `diagnostics.turbidity.relative_status`
+    (the shape the current ESP32 firmware emits).
+
+    Returns (unit, status, error). `unit`/`status` are None when absent;
+    `error` is a human-readable reason when the fields are malformed.
+    A status band is only meaningful for relative-index readings.
+    """
+    unit = data.get("turbidity_unit")
+    status = data.get("turbidity_status")
+
+    diagnostics = data.get("diagnostics")
+    diag_turbidity = None
+    if isinstance(diagnostics, dict):
+        candidate = diagnostics.get("turbidity")
+        if isinstance(candidate, dict):
+            diag_turbidity = candidate
+
+    if unit is None and diag_turbidity is not None:
+        unit = diag_turbidity.get("unit")
+    if status is None and diag_turbidity is not None:
+        status = diag_turbidity.get("relative_status")
+
+    if unit is not None:
+        if not isinstance(unit, str) or not TURBIDITY_UNIT_PATTERN.match(unit):
+            return None, None, f"Invalid turbidity_unit (1-32 chars [A-Za-z0-9_.-]): {unit!r}"
+        unit = unit.strip()
+
+    if status is not None:
+        if not isinstance(status, str):
+            return None, None, f"Invalid turbidity_status: {status!r}"
+        status = status.strip().upper()
+        if status not in TURBIDITY_STATUS_BANDS:
+            return None, None, (
+                "Invalid turbidity_status (expected CLEARER, MODERATE or CLOUDIER): "
+                f"{status!r}"
+            )
+
+    # A status band only describes a relative-index reading. A missing value
+    # has neither unit nor status; a non-relative unit (e.g. NTU) keeps its
+    # unit but drops the band.
+    if data.get("turbidity") is None:
+        return None, None, None
+    if unit != TURBIDITY_UNIT_RELATIVE:
+        status = None
+
+    return unit, status, None
+
 
 def parse_timestamp(ts_str: Any) -> Optional[datetime]:
     if not isinstance(ts_str, str):
@@ -59,12 +123,16 @@ def validate_telemetry_payload(data: Dict[str, Any]) -> Tuple[bool, str]:
     # for it (uncalibrated analog sensor, or a failed/missing sensor). NULL is
     # stored as NULL — never fabricated, never interpreted as "safe". Numeric
     # values must still pass the exact physical range checks as before.
+    # Turbidity unit/status (optional, but must be well-formed when present).
+    turbidity_unit, _turbidity_status, turbidity_error = parse_turbidity_meta(data)
+    if turbidity_error:
+        return False, turbidity_error
+
     # NOTE on `turbidity`: simulator payloads carry NTU-like values; ESP32
     # hardware payloads carry a PROVISIONAL RELATIVE INDEX 0-100 (higher =
-    # cloudier, never NTU) — the unit is tagged in
-    # diagnostics.turbidity.unit == "relative_index_0_100". The column stores
-    # either meaning verbatim; consumers must check `source`/`unit` before
-    # interpreting it. The range check below (>= 0) is valid for both.
+    # cloudier, never NTU). The unit is stored per row, so consumers must check
+    # `turbidity_unit` before interpreting the number. A relative index is
+    # additionally bounded to [0, 100]; NTU-style values keep the >= 0 range.
     sensor_ranges: Dict[str, Tuple[float, float]] = {
         "pH": (0.0, 14.0),
         "turbidity": (0.0, float("inf")),
@@ -81,6 +149,8 @@ def validate_telemetry_payload(data: Dict[str, Any]) -> Tuple[bool, str]:
             return False, f"Non-numeric value provided for {field}"
         if not (lo <= numeric <= hi):
             return False, f"{field} out of valid physical range [{lo}, {hi}]: {numeric}"
+        if field == "turbidity" and turbidity_unit == TURBIDITY_UNIT_RELATIVE and numeric > 100.0:
+            return False, f"turbidity relative index out of range [0, 100]: {numeric}"
 
     # Optional provenance tag: "esp32" for physical hardware, "simulator" for
     # the Python simulator. Anything absent or invalid becomes "simulator".
@@ -178,6 +248,7 @@ def process_telemetry_payload(payload_str: str, db_session_factory=SessionLocal)
     station_code = data["station_code"]
     device_id = data["device_id"]
     parsed_ts = parse_timestamp(data["timestamp"])
+    turbidity_unit, turbidity_status, _ = parse_turbidity_meta(data)
     db = db_session_factory()
     try:
         station = db.query(MonitoringStation).filter(MonitoringStation.station_code == station_code).first()
@@ -213,6 +284,9 @@ def process_telemetry_payload(payload_str: str, db_session_factory=SessionLocal)
             turbidity=None if data["turbidity"] is None else float(data["turbidity"]),
             tds=None if data["tds"] is None else float(data["tds"]),
             temperature=None if data["temperature"] is None else float(data["temperature"]),
+            # Unit only exists alongside a value; NULL = unknown, never NTU.
+            turbidity_unit=turbidity_unit if data["turbidity"] is not None else None,
+            turbidity_status=turbidity_status if data["turbidity"] is not None else None,
             source=data.get("source") or "simulator",
             diagnostics=data.get("diagnostics"),
         )
@@ -222,8 +296,20 @@ def process_telemetry_payload(payload_str: str, db_session_factory=SessionLocal)
         logger.info(
             f"Ingested SensorReading id={reading.id} for station='{station_code}' "
             f"source='{reading.source}' (pH={reading.ph}, turbidity={reading.turbidity}, "
+            f"unit={reading.turbidity_unit}, status={reading.turbidity_status}, "
             f"tds={reading.tds}, temp={reading.temperature})"
         )
+
+        # ML honesty: the models were trained on NTU-style turbidity. A relative
+        # index 0-100 is a different quantity, so feeding it to the model would
+        # silently misread the feature — such readings keep NULL ML fields.
+        if reading.turbidity_unit == TURBIDITY_UNIT_RELATIVE:
+            logger.info(
+                "SensorReading id=%s stored without ML results: turbidity is a "
+                "relative index 0-100 (not NTU), so it cannot be used as an NTU model input.",
+                reading.id,
+            )
+            return True
 
         # Phase 6: ML inference AFTER the reading is safely persisted — and only
         # when ALL four sensor values exist. A reading with any NULL value

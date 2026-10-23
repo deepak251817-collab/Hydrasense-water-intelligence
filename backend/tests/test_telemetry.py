@@ -672,3 +672,230 @@ def test_latest_reading_endpoint_exposes_hardware_fields(client, authority_token
     assert analysis["ph"] is None
     assert analysis["source"] == "esp32"
     assert analysis["ml"]["ml_processed_at"] is None  # no fabricated ML result
+
+
+# ---------------------------------------------------------------------------
+# Relative turbidity units: the ESP32 index (0-100) is NOT NTU. The unit is
+# stored per row, validated, and surfaced through the API.
+# ---------------------------------------------------------------------------
+# 21. Top-level unit/status contract (as documented for the device) is stored.
+def test_top_level_turbidity_unit_and_status_stored(db_session, seeded_stations):
+    payload = json.dumps({
+        "station_code": "ARK-001",
+        "device_id": "ESP32-HS-001",
+        "timestamp": "2026-10-24T09:00:00Z",
+        "pH": None,
+        "turbidity": 68.2,
+        "turbidity_status": "CLOUDIER",
+        "turbidity_unit": "relative_index_0_100",
+        "tds": None,
+        "temperature": 27.0,
+        "source": "esp32",
+    })
+    assert process_telemetry_payload(payload, db_session_factory=lambda: db_session) is True
+    reading = db_session.query(SensorReading).filter(SensorReading.device_id == "ESP32-HS-001").first()
+    assert reading.turbidity == 68.2
+    assert reading.turbidity_unit == "relative_index_0_100"
+    assert reading.turbidity_status == "CLOUDIER"
+
+
+# 22. Current firmware contract: unit/status live inside diagnostics.turbidity.
+def test_diagnostics_turbidity_unit_fallback(db_session, seeded_stations):
+    payload = json.dumps({
+        "station_code": "ARK-001",
+        "device_id": "ESP32-HS-001",
+        "timestamp": "2026-10-24T09:00:03Z",
+        "pH": None,
+        "turbidity": 41.5,
+        "tds": None,
+        "temperature": 27.0,
+        "source": "esp32",
+        "diagnostics": {
+            "turbidity": {
+                "unit": "relative_index_0_100",
+                "raw_adc": 5000,
+                "voltage_v": 0.625,
+                "sensor_output_v": 0.938,
+                "relative_index": 41.5,
+                "relative_status": "MODERATE",
+                "calibration_status": "provisional_index",
+            }
+        },
+    })
+    assert process_telemetry_payload(payload, db_session_factory=lambda: db_session) is True
+    reading = db_session.query(SensorReading).filter(SensorReading.device_id == "ESP32-HS-001").first()
+    assert reading.turbidity_unit == "relative_index_0_100"
+    assert reading.turbidity_status == "MODERATE"
+
+
+# 23. Index above 100 rejected; 0 and 100 accepted.
+def test_relative_index_out_of_range_rejected(db_session, seeded_stations):
+    base = {
+        "station_code": "ARK-001",
+        "device_id": "ESP32-HS-001",
+        "pH": None,
+        "tds": None,
+        "temperature": 27.0,
+        "turbidity_unit": "relative_index_0_100",
+        "source": "esp32",
+    }
+    for ts, value in [("2026-10-24T09:01:00Z", 0.0), ("2026-10-24T09:01:03Z", 100.0)]:
+        assert process_telemetry_payload(
+            json.dumps(dict(base, timestamp=ts, turbidity=value)),
+            db_session_factory=lambda: db_session,
+        ) is True
+    assert db_session.query(SensorReading).count() == 2
+
+    too_high = dict(base, timestamp="2026-10-24T09:01:06Z", turbidity=100.5)
+    ok, reason = validate_telemetry_payload(too_high)
+    assert ok is False
+    assert "0, 100" in reason
+    assert process_telemetry_payload(
+        json.dumps(too_high), db_session_factory=lambda: db_session
+    ) is False
+    assert db_session.query(SensorReading).count() == 2
+
+
+# 24. NTU-style values are NOT bounded by 100 (simulator keeps working) and the
+#     simulator's explicit `ntu` unit is stored; a band is dropped for NTU.
+def test_ntu_unit_does_not_get_index_bounds(db_session, seeded_stations):
+    payload = json.dumps({
+        "station_code": "ARK-002",
+        "device_id": "STATION-ARK-002",
+        "timestamp": "2026-10-24T09:02:00Z",
+        "pH": 7.1,
+        "turbidity": 78.5,
+        "turbidity_status": "CLOUDIER",  # meaningless for NTU -> dropped
+        "turbidity_unit": "ntu",
+        "tds": 220.0,
+        "temperature": 25.0,
+        "source": "simulator",
+    })
+    assert process_telemetry_payload(payload, db_session_factory=lambda: db_session) is True
+    reading = db_session.query(SensorReading).filter(SensorReading.device_id == "STATION-ARK-002").first()
+    assert reading.turbidity == 78.5
+    assert reading.turbidity_unit == "ntu"
+    assert reading.turbidity_status is None
+
+
+# 25. Malformed unit/status values are rejected without crashing the subscriber.
+@pytest.mark.parametrize("bad", [
+    {"turbidity_unit": 42},
+    {"turbidity_unit": "relative index with spaces"},
+    {"turbidity_status": "VERY_CLOUDY"},
+    {"turbidity_status": 3},
+])
+def test_malformed_turbidity_metadata_rejected(db_session, seeded_stations, bad):
+    payload = json.dumps({
+        "station_code": "ARK-001",
+        "device_id": "ESP32-HS-001",
+        "timestamp": "2026-10-24T09:03:00Z",
+        "pH": None,
+        "turbidity": 50.0,
+        "tds": None,
+        "temperature": 27.0,
+        "source": "esp32",
+        **bad,
+    })
+    ok, _reason = validate_telemetry_payload(json.loads(payload))
+    assert ok is False
+    assert process_telemetry_payload(payload, db_session_factory=lambda: db_session) is False
+    assert db_session.query(SensorReading).count() == 0
+
+
+# 26. Missing unit -> stored as NULL (unknown), never assumed NTU or index.
+def test_missing_turbidity_unit_stored_as_unknown(db_session, seeded_stations):
+    payload = json.dumps({
+        "station_code": "ARK-003",
+        "device_id": "LEGACY-DEVICE",
+        "timestamp": "2026-10-24T09:04:00Z",
+        "pH": 7.0,
+        "turbidity": 12.0,
+        "tds": 200.0,
+        "temperature": 25.0,
+    })
+    assert process_telemetry_payload(payload, db_session_factory=lambda: db_session) is True
+    reading = db_session.query(SensorReading).filter(SensorReading.device_id == "LEGACY-DEVICE").first()
+    assert reading.turbidity == 12.0
+    assert reading.turbidity_unit is None   # unknown, not "ntu" and not relative index
+    assert reading.turbidity_status is None
+
+
+# 27. Null turbidity -> no unit/status even if metadata is present.
+def test_null_turbidity_drops_unit_and_status(db_session, seeded_stations):
+    payload = json.dumps({
+        "station_code": "ARK-001",
+        "device_id": "ESP32-HS-001",
+        "timestamp": "2026-10-24T09:05:00Z",
+        "pH": None,
+        "turbidity": None,
+        "turbidity_unit": "relative_index_0_100",
+        "turbidity_status": "CLOUDIER",
+        "tds": None,
+        "temperature": 27.0,
+        "source": "esp32",
+    })
+    assert process_telemetry_payload(payload, db_session_factory=lambda: db_session) is True
+    reading = db_session.query(SensorReading).filter(SensorReading.device_id == "ESP32-HS-001").first()
+    assert reading.turbidity is None
+    assert reading.turbidity_unit is None
+    assert reading.turbidity_status is None
+
+
+# 28. Relative index is not fed to the NTU-trained ML models, even when every
+#     other value is present.
+def test_relative_index_skips_ml(db_session, seeded_stations):
+    payload = json.dumps({
+        "station_code": "ARK-001",
+        "device_id": "ESP32-HS-001",
+        "timestamp": "2026-10-24T09:06:00Z",
+        "pH": 7.05,
+        "turbidity": 55.0,
+        "turbidity_unit": "relative_index_0_100",
+        "turbidity_status": "CLOUDIER",
+        "tds": 210.0,
+        "temperature": 27.0,
+        "source": "esp32",
+    })
+    assert process_telemetry_payload(payload, db_session_factory=lambda: db_session) is True
+    reading = db_session.query(SensorReading).filter(SensorReading.device_id == "ESP32-HS-001").first()
+    assert reading.turbidity == 55.0
+    assert reading.water_quality_label is None
+    assert reading.anomaly_label is None
+    assert reading.ml_processed_at is None
+
+
+# 29. API exposes turbidity_unit/turbidity_status on latest + history endpoints.
+def test_api_exposes_turbidity_unit_and_status(
+    client, authority_token_headers, db_session, seeded_stations
+):
+    payload = json.dumps({
+        "station_code": "ARK-001",
+        "device_id": "ESP32-HS-001",
+        "timestamp": "2026-10-24T09:07:00Z",
+        "pH": None,
+        "turbidity": 77.7,
+        "turbidity_unit": "relative_index_0_100",
+        "turbidity_status": "CLOUDIER",
+        "tds": None,
+        "temperature": 27.0,
+        "source": "esp32",
+    })
+    assert process_telemetry_payload(payload, db_session_factory=lambda: db_session) is True
+
+    latest = client.get(
+        "/api/authority/stations/ARK-001/readings/latest", headers=authority_token_headers
+    )
+    assert latest.status_code == 200
+    body = latest.json()
+    assert body["turbidity"] == 77.7
+    assert body["turbidity_unit"] == "relative_index_0_100"
+    assert body["turbidity_status"] == "CLOUDIER"
+
+    history = client.get(
+        "/api/authority/stations/ARK-001/readings", headers=authority_token_headers
+    )
+    assert history.status_code == 200
+    rows = history.json()
+    assert rows[0]["turbidity_unit"] == "relative_index_0_100"
+    assert rows[0]["turbidity_status"] == "CLOUDIER"

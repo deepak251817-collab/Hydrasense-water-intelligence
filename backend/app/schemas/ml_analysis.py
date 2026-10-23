@@ -38,6 +38,11 @@ class ReadingAnalysisResponse(BaseModel):
     # status, device health) travels in `diagnostics`.
     ph: Optional[float] = None
     turbidity: Optional[float] = None
+    # Unit of `turbidity`: "relative_index_0_100" (ESP32 provisional 0-100
+    # index — NOT NTU), "ntu", or None = unknown.
+    turbidity_unit: Optional[str] = None
+    # Firmware band for relative-index rows: CLEARER / MODERATE / CLOUDIER.
+    turbidity_status: Optional[str] = None
     tds: Optional[float] = None
     temperature: Optional[float] = None
     source: str = "simulator"

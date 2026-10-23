@@ -191,11 +191,26 @@ export interface SensorDiagnostics {
   relative_status?: string | null;
 }
 
+/** The `device` entry firmware adds to diagnostics (health/sequence). */
+export interface DeviceHealthDiagnostics {
+  uptime_ms?: number;
+  wifi_rssi_dbm?: number;
+  seq?: number;
+  errors?: string[];
+  [key: string]: number | string[] | undefined;
+}
+
 export interface DeviceDiagnostics {
   uptime_ms?: number;
   wifi_rssi_dbm?: number;
+  seq?: number;
   errors?: string[];
-  [sensor: string]: SensorDiagnostics | number | string[] | undefined;
+  [sensor: string]:
+    | SensorDiagnostics
+    | DeviceHealthDiagnostics
+    | number
+    | string[]
+    | undefined;
 }
 
 /**
@@ -216,6 +231,10 @@ export interface ReadingAnalysisResponse {
   created_at: string;
   ph: number | null;
   turbidity: number | null;
+  /** "relative_index_0_100" (ESP32 index — NOT NTU) | "ntu" | null (unknown). */
+  turbidity_unit?: string | null;
+  /** CLEARER / MODERATE / CLOUDIER for relative-index rows. */
+  turbidity_status?: string | null;
   tds: number | null;
   temperature: number | null;
   source: string;
@@ -233,10 +252,36 @@ export interface LatestReading {
   timestamp: string;
   pH: number | null;
   turbidity: number | null;
+  /** "relative_index_0_100" = ESP32 provisional index (NOT NTU),
+   * "ntu" = simulated NTU-style value, null = unit unknown. */
+  turbidity_unit?: string | null;
+  /** Firmware band for relative-index rows: CLEARER / MODERATE / CLOUDIER. */
+  turbidity_status?: string | null;
   tds: number | null;
   temperature: number | null;
   source: string;
   diagnostics: DeviceDiagnostics | null;
+}
+
+/**
+ * One row of station reading history (GET …/readings). Same nullable values
+ * and turbidity unit semantics as LatestReading.
+ */
+export interface StationReading {
+  id: number;
+  station_id: number;
+  station_code: string | null;
+  device_id: string;
+  timestamp: string;
+  pH: number | null;
+  turbidity: number | null;
+  turbidity_unit?: string | null;
+  turbidity_status?: string | null;
+  tds: number | null;
+  temperature: number | null;
+  source: string;
+  diagnostics: DeviceDiagnostics | null;
+  created_at: string;
 }
 
 export interface MonitoringStation {
@@ -305,6 +350,13 @@ export const authorityApi = {
   getLatestReading: (stationCode: string, token: string) =>
     apiGetAuth<LatestReading>(
       `/authority/stations/${stationCode}/readings/latest`,
+      token
+    ),
+
+  /** Recent readings for a station, newest first (authority-only). */
+  getStationReadings: (stationCode: string, token: string, limit = 50) =>
+    apiGetAuth<StationReading[]>(
+      `/authority/stations/${stationCode}/readings?limit=${limit}`,
       token
     ),
 };
