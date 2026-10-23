@@ -73,6 +73,8 @@ def get_latest_station_reading_analysis(
         turbidity=reading.turbidity,
         tds=reading.tds,
         temperature=reading.temperature,
+        source=reading.source,
+        diagnostics=reading.diagnostics,
         ml=MLAnalysisResponse(
             anomaly_label=reading.anomaly_label,
             anomaly_score=reading.anomaly_score,
@@ -118,6 +120,8 @@ def get_latest_station_reading(
         turbidity=reading.turbidity,
         tds=reading.tds,
         temperature=reading.temperature,
+        source=reading.source,
+        diagnostics=reading.diagnostics,
     )
 
 
@@ -152,11 +156,13 @@ def get_station_readings_history(
                 station_code=station.station_code,
                 device_id=r.device_id,
                 timestamp=r.timestamp,
-                pH=r.ph,
-                turbidity=r.turbidity,
-                tds=r.tds,
-                temperature=r.temperature,
-                created_at=r.created_at,
+            pH=r.ph,
+            turbidity=r.turbidity,
+            tds=r.tds,
+            temperature=r.temperature,
+            source=r.source,
+            diagnostics=r.diagnostics,
+            created_at=r.created_at,
             )
         )
     return result
@@ -197,6 +203,8 @@ def get_reading_ml_analysis(
         turbidity=reading.turbidity,
         tds=reading.tds,
         temperature=reading.temperature,
+        source=reading.source,
+        diagnostics=reading.diagnostics,
         ml=MLAnalysisResponse(
             anomaly_label=reading.anomaly_label,
             anomaly_score=reading.anomaly_score,

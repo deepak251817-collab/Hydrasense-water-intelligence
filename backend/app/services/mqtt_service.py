@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Tuple, Optional, Any, Dict
 import paho.mqtt.client as mqtt
@@ -14,6 +15,14 @@ from app.services.ml_service import (
 )
 
 logger = logging.getLogger("hydrasense.mqtt")
+
+# Provenance tag for physical station hardware; anything else defaults to
+# "simulator" (Python simulator, seeded rows predating this field).
+SOURCE_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,20}$")
+
+# Cap on the serialized diagnostics blob (raw ADC + voltages + device health).
+# Keeps a misbehaving device from bloating rows; real payloads are ~500 bytes.
+DIAGNOSTICS_MAX_CHARS = 8192
 
 
 def parse_timestamp(ts_str: Any) -> Optional[datetime]:
@@ -46,26 +55,52 @@ def validate_telemetry_payload(data: Dict[str, Any]) -> Tuple[bool, str]:
     if ts is None:
         return False, "Invalid timestamp format (ISO-8601 required)"
 
-    try:
-        ph = float(data["pH"])
-        turbidity = float(data["turbidity"])
-        tds = float(data["tds"])
-        temperature = float(data["temperature"])
-    except (ValueError, TypeError):
-        return False, "Non-numeric values provided for sensor readings"
+    # A sensor value may be JSON null: the device has NO honest measurement
+    # for it (uncalibrated analog sensor, or a failed/missing sensor). NULL is
+    # stored as NULL — never fabricated, never interpreted as "safe". Numeric
+    # values must still pass the exact physical range checks as before.
+    # NOTE on `turbidity`: simulator payloads carry NTU-like values; ESP32
+    # hardware payloads carry a PROVISIONAL RELATIVE INDEX 0-100 (higher =
+    # cloudier, never NTU) — the unit is tagged in
+    # diagnostics.turbidity.unit == "relative_index_0_100". The column stores
+    # either meaning verbatim; consumers must check `source`/`unit` before
+    # interpreting it. The range check below (>= 0) is valid for both.
+    sensor_ranges: Dict[str, Tuple[float, float]] = {
+        "pH": (0.0, 14.0),
+        "turbidity": (0.0, float("inf")),
+        "tds": (0.0, float("inf")),
+        "temperature": (-20.0, 70.0),
+    }
+    for field, (lo, hi) in sensor_ranges.items():
+        value = data[field]
+        if value is None:
+            continue
+        try:
+            numeric = float(value)
+        except (ValueError, TypeError):
+            return False, f"Non-numeric value provided for {field}"
+        if not (lo <= numeric <= hi):
+            return False, f"{field} out of valid physical range [{lo}, {hi}]: {numeric}"
 
-    # Physical range validations
-    if not (0.0 <= ph <= 14.0):
-        return False, f"pH out of valid physical range [0, 14]: {ph}"
+    # Optional provenance tag: "esp32" for physical hardware, "simulator" for
+    # the Python simulator. Anything absent or invalid becomes "simulator".
+    source = data.get("source")
+    if source is not None and (
+        not isinstance(source, str) or not SOURCE_PATTERN.match(source)
+    ):
+        return False, f"Invalid source tag (1-20 chars [A-Za-z0-9_-]): {source!r}"
 
-    if turbidity < 0.0:
-        return False, f"Turbidity cannot be negative: {turbidity}"
-
-    if tds < 0.0:
-        return False, f"TDS cannot be negative: {tds}"
-
-    if not (-20.0 <= temperature <= 70.0):
-        return False, f"Temperature out of reasonable physical range [-20, 70]: {temperature}"
+    # Optional device diagnostics (raw ADC, voltages, calibration status,
+    # device health). Stored verbatim, size-capped.
+    diagnostics = data.get("diagnostics")
+    if diagnostics is not None:
+        if not isinstance(diagnostics, dict):
+            return False, "diagnostics must be a JSON object"
+        try:
+            if len(json.dumps(diagnostics)) > DIAGNOSTICS_MAX_CHARS:
+                return False, f"diagnostics blob exceeds {DIAGNOSTICS_MAX_CHARS} characters"
+        except (TypeError, ValueError):
+            return False, "diagnostics is not JSON-serializable"
 
     return True, "Valid"
 
@@ -141,6 +176,8 @@ def process_telemetry_payload(payload_str: str, db_session_factory=SessionLocal)
         return False
 
     station_code = data["station_code"]
+    device_id = data["device_id"]
+    parsed_ts = parse_timestamp(data["timestamp"])
     db = db_session_factory()
     try:
         station = db.query(MonitoringStation).filter(MonitoringStation.station_code == station_code).first()
@@ -148,25 +185,58 @@ def process_telemetry_payload(payload_str: str, db_session_factory=SessionLocal)
             logger.warning(f"Rejected telemetry for unknown station_code: '{station_code}'")
             return False
 
-        parsed_ts = parse_timestamp(data["timestamp"])
+        # Duplicate guard: MQTT QoS 1 redelivery or a device retransmit re-sends
+        # the SAME timestamp (device clock is the source of truth per reading).
+        # An exact (device_id, timestamp) match already stored is skipped.
+        duplicate = (
+            db.query(SensorReading.id)
+            .filter(
+                SensorReading.station_id == station.id,
+                SensorReading.device_id == device_id,
+                SensorReading.timestamp == parsed_ts,
+            )
+            .first()
+        )
+        if duplicate is not None:
+            logger.info(
+                f"Skipped duplicate telemetry for station='{station_code}' "
+                f"device_id='{device_id}' timestamp={parsed_ts.isoformat()} "
+                f"(existing SensorReading id={duplicate.id})"
+            )
+            return True
+
         reading = SensorReading(
             station_id=station.id,
-            device_id=data["device_id"],
+            device_id=device_id,
             timestamp=parsed_ts,
-            ph=float(data["pH"]),
-            turbidity=float(data["turbidity"]),
-            tds=float(data["tds"]),
-            temperature=float(data["temperature"]),
+            ph=None if data["pH"] is None else float(data["pH"]),
+            turbidity=None if data["turbidity"] is None else float(data["turbidity"]),
+            tds=None if data["tds"] is None else float(data["tds"]),
+            temperature=None if data["temperature"] is None else float(data["temperature"]),
+            source=data.get("source") or "simulator",
+            diagnostics=data.get("diagnostics"),
         )
         db.add(reading)
         db.commit()
         db.refresh(reading)
-        logger.info(f"Ingested SensorReading id={reading.id} for station='{station_code}' (pH={reading.ph}, turbidity={reading.turbidity}, tds={reading.tds}, temp={reading.temperature})")
+        logger.info(
+            f"Ingested SensorReading id={reading.id} for station='{station_code}' "
+            f"source='{reading.source}' (pH={reading.ph}, turbidity={reading.turbidity}, "
+            f"tds={reading.tds}, temp={reading.temperature})"
+        )
 
-        # Phase 6: ML inference AFTER the reading is safely persisted.
-        # Telemetry ingestion never blocks indefinitely on ML: attach_ml_results
-        # catches every failure and leaves ML fields NULL rather than storing
-        # fabricated predictions.
+        # Phase 6: ML inference AFTER the reading is safely persisted — and only
+        # when ALL four sensor values exist. A reading with any NULL value
+        # (uncalibrated or failed sensor) keeps NULL ML fields: no prediction is
+        # ever fabricated from missing data.
+        if None in (reading.ph, reading.turbidity, reading.tds, reading.temperature):
+            logger.info(
+                "SensorReading id=%s stored without ML results: one or more sensor "
+                "values are NULL (uncalibrated or failed sensor).",
+                reading.id,
+            )
+            return True
+
         attach_ml_results(
             reading_id=reading.id,
             ph=reading.ph,

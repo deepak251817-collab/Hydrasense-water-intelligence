@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import List, Optional
-from sqlalchemy import String, Text, Float, Boolean, DateTime, ForeignKey, Integer, func
+from sqlalchemy import String, Text, Float, Boolean, DateTime, ForeignKey, Integer, JSON, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.database import Base
 
@@ -61,10 +61,26 @@ class SensorReading(Base):
     station_id: Mapped[int] = mapped_column(ForeignKey("monitoring_stations.id"), nullable=False, index=True)
     device_id: Mapped[str] = mapped_column(String(100), nullable=False)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
-    ph: Mapped[float] = mapped_column(Float, nullable=False)
-    turbidity: Mapped[float] = mapped_column(Float, nullable=False)
-    tds: Mapped[float] = mapped_column(Float, nullable=False)
-    temperature: Mapped[float] = mapped_column(Float, nullable=False)
+
+    # Nullable: a value is NULL when the device has no honest measurement for
+    # it — an uncalibrated analog sensor (pH/turbidity/TDS) or a failed sensor
+    # (e.g. DS18B20 disconnected). NULL never means "safe" or "normal"; the
+    # UI renders it as "uncalibrated/unavailable". Simulated telemetry always
+    # provides full values, so existing rows are unaffected.
+    ph: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    turbidity: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    tds: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    temperature: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+    # Telemetry provenance: "simulator" (Python simulator / seeded demo data)
+    # or "esp32" (physical station hardware). Keeps simulated and physical
+    # readings distinguishable in every query.
+    source: Mapped[str] = mapped_column(String(20), nullable=False, default="simulator", server_default="simulator")
+
+    # Optional device diagnostics JSON: raw ADC counts, measured voltages,
+    # calibration status per sensor, device health (uptime, Wi-Fi RSSI,
+    # error list). Stored verbatim; never used for ML inference.
+    diagnostics: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
     # Phase 6 ML results (nullable: rows predating ML, or where inference
     # failed/skipped, keep NULL — never fabricated values).

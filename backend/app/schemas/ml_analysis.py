@@ -33,9 +33,14 @@ class ReadingAnalysisResponse(BaseModel):
     timestamp: datetime
     created_at: datetime
 
-    ph: float
-    turbidity: float
-    tds: float
-    temperature: float
+    # NULL = no honest measurement yet (uncalibrated sensor or sensor fault),
+    # never "safe"/"normal". Hardware raw data (ADC, voltage, calibration
+    # status, device health) travels in `diagnostics`.
+    ph: Optional[float] = None
+    turbidity: Optional[float] = None
+    tds: Optional[float] = None
+    temperature: Optional[float] = None
+    source: str = "simulator"
+    diagnostics: Optional[dict] = None
 
     ml: MLAnalysisResponse

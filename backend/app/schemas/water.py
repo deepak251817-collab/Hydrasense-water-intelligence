@@ -53,10 +53,14 @@ class LatestSensorReadingResponse(BaseModel):
     station_code: str
     device_id: str
     timestamp: datetime
-    pH: float
-    turbidity: float
-    tds: float
-    temperature: float
+    # NULL = no honest measurement yet (uncalibrated sensor or sensor fault),
+    # never "safe"/"normal". Hardware raw data travels in `diagnostics`.
+    pH: Optional[float] = None
+    turbidity: Optional[float] = None
+    tds: Optional[float] = None
+    temperature: Optional[float] = None
+    source: str = "simulator"
+    diagnostics: Optional[dict] = None
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
@@ -67,10 +71,13 @@ class SensorReadingResponse(BaseModel):
     station_code: Optional[str] = None
     device_id: str
     timestamp: datetime
-    pH: float
-    turbidity: float
-    tds: float
-    temperature: float
+    # NULL = no honest measurement yet (uncalibrated sensor or sensor fault).
+    pH: Optional[float] = None
+    turbidity: Optional[float] = None
+    tds: Optional[float] = None
+    temperature: Optional[float] = None
+    source: str = "simulator"
+    diagnostics: Optional[dict] = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)

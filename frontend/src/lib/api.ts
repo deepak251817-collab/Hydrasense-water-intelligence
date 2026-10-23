@@ -168,8 +168,44 @@ export interface MLAnalysis {
 }
 
 /**
+ * Per-sensor raw diagnostics reported by physical station hardware
+ * (backend `diagnostics` JSON on a sensor reading). Raw ADC counts and
+ * measured voltages — NOT calibrated engineering values.
+ */
+export interface SensorDiagnostics {
+  raw_adc?: number;
+  voltage_v?: number;
+  calibration_status?: string; // "pending" | "provisional_index" | "calibrated" (device-reported)
+  valid?: boolean;
+  error?: string | null;
+  sensor?: string;
+  /** Turbidity only: unit tag from the ESP32. "relative_index_0_100" means
+   * the numeric `turbidity` field is a PROVISIONAL relative index
+   * (0-100, higher = cloudier), NOT NTU. */
+  unit?: string;
+  /** Turbidity only: reconstructed sensor output voltage (A2 × divider). */
+  sensor_output_v?: number;
+  /** Turbidity only: the 0-100 relative index (mirrors the top-level field). */
+  relative_index?: number | null;
+  /** Turbidity only: "CLEARER" | "MODERATE" | "CLOUDIER" (null when invalid). */
+  relative_status?: string | null;
+}
+
+export interface DeviceDiagnostics {
+  uptime_ms?: number;
+  wifi_rssi_dbm?: number;
+  errors?: string[];
+  [sensor: string]: SensorDiagnostics | number | string[] | undefined;
+}
+
+/**
  * Authority payload: sensor reading information + ML analysis
  * (Phase 6 backend schema: ReadingAnalysisResponse).
+ *
+ * Sensor values are nullable: NULL means the device has NO honest
+ * measurement for it (uncalibrated sensor or sensor fault) — rendered as
+ * "Uncalibrated", never as a fabricated number or a default "Safe".
+ * `source` distinguishes "esp32" (physical hardware) from "simulator".
  */
 export interface ReadingAnalysisResponse {
   reading_id: number;
@@ -178,11 +214,29 @@ export interface ReadingAnalysisResponse {
   device_id: string;
   timestamp: string;
   created_at: string;
-  ph: number;
-  turbidity: number;
-  tds: number;
-  temperature: number;
+  ph: number | null;
+  turbidity: number | null;
+  tds: number | null;
+  temperature: number | null;
+  source: string;
+  diagnostics: DeviceDiagnostics | null;
   ml: MLAnalysis;
+}
+
+/**
+ * Latest raw reading for a station (GET …/readings/latest) — same nullable
+ * sensor semantics as ReadingAnalysisResponse, without ML results.
+ */
+export interface LatestReading {
+  station_code: string;
+  device_id: string;
+  timestamp: string;
+  pH: number | null;
+  turbidity: number | null;
+  tds: number | null;
+  temperature: number | null;
+  source: string;
+  diagnostics: DeviceDiagnostics | null;
 }
 
 export interface MonitoringStation {
@@ -244,6 +298,13 @@ export const authorityApi = {
   getLatestStationAnalysis: (stationCode: string, token: string) =>
     apiGetAuth<ReadingAnalysisResponse>(
       `/authority/stations/${stationCode}/readings/latest/analysis`,
+      token
+    ),
+
+  /** Latest sensor reading for a station — raw values + diagnostics, no ML (authority-only). */
+  getLatestReading: (stationCode: string, token: string) =>
+    apiGetAuth<LatestReading>(
+      `/authority/stations/${stationCode}/readings/latest`,
       token
     ),
 };

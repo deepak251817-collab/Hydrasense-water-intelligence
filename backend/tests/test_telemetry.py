@@ -432,3 +432,243 @@ def test_ml_failure_keeps_ingestion_functional(db_session, seeded_stations, monk
     assert reading is not None  # ingestion functional
     assert reading.water_quality_label is None  # no fabricated prediction
     assert reading.ml_processed_at is None
+
+
+# ---------------------------------------------------------------------------
+# ESP32 hardware telemetry: NULL = uncalibrated/failed sensor (never "safe"),
+# source provenance, diagnostics blob, duplicate guard.
+# ---------------------------------------------------------------------------
+HARDWARE_DIAGNOSTICS = {
+    "ph": {"raw_adc": 19952, "voltage_v": 2.494, "calibration_status": "pending"},
+    "tds": {"raw_adc": 32, "voltage_v": 0.004, "calibration_status": "pending"},
+    "turbidity": {"raw_adc": 12592, "voltage_v": 1.574, "calibration_status": "pending"},
+    "temperature": {"sensor": "DS18B20", "valid": True},
+    "device": {"uptime_ms": 69112, "wifi_rssi_dbm": -41, "errors": []},
+}
+
+
+# 14. Uncalibrated ESP32 reading: NULL sensor values + raw diagnostics stored.
+#     No fabricated pH/NTU/ppm, no ML prediction, provenance recorded.
+def test_uncalibrated_hardware_reading_stored_without_fabrication(db_session, seeded_stations):
+    payload = json.dumps({
+        "station_code": "ARK-001",
+        "device_id": "ESP32-HS-001",
+        "timestamp": "2026-10-22T10:15:30Z",
+        "pH": None,
+        "turbidity": None,
+        "tds": None,
+        "temperature": 27.0,
+        "source": "esp32",
+        "diagnostics": HARDWARE_DIAGNOSTICS,
+    })
+    assert process_telemetry_payload(payload, db_session_factory=lambda: db_session) is True
+
+    reading = db_session.query(SensorReading).filter(SensorReading.device_id == "ESP32-HS-001").first()
+    assert reading is not None
+    assert reading.ph is None
+    assert reading.turbidity is None
+    assert reading.tds is None
+    assert reading.temperature == 27.0
+    assert reading.source == "esp32"
+    assert reading.diagnostics["ph"]["raw_adc"] == 19952
+    assert reading.diagnostics["tds"]["voltage_v"] == 0.004
+    # NULL sensor values -> ML must NOT run (no prediction from missing data).
+    assert reading.anomaly_label is None
+    assert reading.water_quality_label is None
+    assert reading.ml_processed_at is None
+
+
+# 15. Absent `source` defaults to "simulator" — simulated and physical readings
+#     stay distinguishable even for legacy payloads.
+def test_missing_source_defaults_to_simulator(db_session, seeded_stations):
+    payload = json.dumps({
+        "station_code": "ARK-001",
+        "device_id": "STATION-ARK-001",
+        "timestamp": "2026-10-22T10:15:30Z",
+        "pH": 7.1,
+        "turbidity": 4.0,
+        "tds": 200.0,
+        "temperature": 25.0,
+    })
+    assert process_telemetry_payload(payload, db_session_factory=lambda: db_session) is True
+    reading = db_session.query(SensorReading).filter(SensorReading.device_id == "STATION-ARK-001").first()
+    assert reading.source == "simulator"
+    assert reading.diagnostics is None
+    # Full values -> ML runs as before.
+    assert reading.water_quality_label is not None
+
+
+# 16. Invalid source tag rejected.
+def test_invalid_source_tag_rejection(db_session, seeded_stations):
+    payload = json.dumps({
+        "station_code": "ARK-001",
+        "device_id": "ESP32-HS-001",
+        "timestamp": "2026-10-22T10:15:30Z",
+        "pH": None,
+        "turbidity": None,
+        "tds": None,
+        "temperature": 27.0,
+        "source": "bad tag with spaces!",
+    })
+    assert process_telemetry_payload(payload, db_session_factory=lambda: db_session) is False
+    assert db_session.query(SensorReading).count() == 0
+
+
+# 17. Malformed diagnostics (non-object / oversized) rejected.
+def test_malformed_diagnostics_rejection(db_session, seeded_stations):
+    base = {
+        "station_code": "ARK-001",
+        "device_id": "ESP32-HS-001",
+        "timestamp": "2026-10-22T10:15:30Z",
+        "pH": None,
+        "turbidity": None,
+        "tds": None,
+        "temperature": 27.0,
+    }
+    not_object = dict(base, diagnostics=[1, 2, 3])
+    assert process_telemetry_payload(json.dumps(not_object), db_session_factory=lambda: db_session) is False
+    oversized = dict(base, diagnostics={"blob": "x" * 9000})
+    assert process_telemetry_payload(json.dumps(oversized), db_session_factory=lambda: db_session) is False
+    assert db_session.query(SensorReading).count() == 0
+
+
+# 18. Failed DS18B20 -> temperature NULL (not a fabricated 0 or -127),
+#     reading still ingested, ML skipped.
+def test_failed_temperature_sensor_stored_as_null(db_session, seeded_stations):
+    payload = json.dumps({
+        "station_code": "ARK-002",
+        "device_id": "ESP32-HS-001",
+        "timestamp": "2026-10-22T10:16:00Z",
+        "pH": None,
+        "turbidity": None,
+        "tds": None,
+        "temperature": None,
+        "source": "esp32",
+        "diagnostics": {"temperature": {"sensor": "DS18B20", "valid": False, "error": "disconnected"}},
+    })
+    assert process_telemetry_payload(payload, db_session_factory=lambda: db_session) is True
+    reading = db_session.query(SensorReading).filter(SensorReading.device_id == "ESP32-HS-001").first()
+    assert reading is not None
+    assert reading.temperature is None
+    assert reading.water_quality_label is None
+
+
+# 19. Duplicate guard: redelivered message (same device_id + timestamp) does
+# not create a second row (retransmits keep the identical device clock value).
+def test_duplicate_telemetry_not_stored_twice(db_session, seeded_stations):
+    payload = json.dumps({
+        "station_code": "ARK-001",
+        "device_id": "ESP32-HS-001",
+        "timestamp": "2026-10-22T10:15:30Z",
+        "pH": None,
+        "turbidity": None,
+        "tds": None,
+        "temperature": 27.0,
+        "source": "esp32",
+    })
+    assert process_telemetry_payload(payload, db_session_factory=lambda: db_session) is True
+    assert process_telemetry_payload(payload, db_session_factory=lambda: db_session) is True
+    assert db_session.query(SensorReading).count() == 1
+
+    # A NEW reading (different timestamp) is still stored.
+    payload2 = json.dumps({
+        "station_code": "ARK-001",
+        "device_id": "ESP32-HS-001",
+        "timestamp": "2026-10-22T10:15:33Z",
+        "pH": None,
+        "turbidity": None,
+        "tds": None,
+        "temperature": 27.1,
+        "source": "esp32",
+    })
+    assert process_telemetry_payload(payload2, db_session_factory=lambda: db_session) is True
+    assert db_session.query(SensorReading).count() == 2
+
+
+# 19b. Live turbidity relative index (ESP32): value 0-100 stored verbatim, unit
+#      tag + status band travel in diagnostics, never labelled NTU.
+def test_live_turbidity_relative_index_stored(db_session, seeded_stations):
+    payload = json.dumps({
+        "station_code": "ARK-001",
+        "device_id": "ESP32-HS-001",
+        "timestamp": "2026-10-22T10:20:00Z",
+        "pH": None,
+        "turbidity": 61.7,
+        "tds": None,
+        "temperature": 27.0,
+        "source": "esp32",
+        "diagnostics": {
+            "turbidity": {
+                "unit": "relative_index_0_100",
+                "raw_adc": 8431,
+                "voltage_v": 1.054,
+                "sensor_output_v": 1.581,
+                "relative_index": 61.7,
+                "relative_status": "CLOUDIER",
+                "calibration_status": "provisional_index",
+            },
+        },
+    })
+    assert process_telemetry_payload(payload, db_session_factory=lambda: db_session) is True
+    reading = db_session.query(SensorReading).filter(SensorReading.device_id == "ESP32-HS-001").first()
+    assert reading is not None
+    assert reading.turbidity == 61.7
+    turb_diag = reading.diagnostics["turbidity"]
+    assert turb_diag["unit"] == "relative_index_0_100"
+    assert turb_diag["relative_status"] == "CLOUDIER"
+    assert turb_diag["sensor_output_v"] == 1.581
+    # Not calibrated NTU -> ML must not treat it as a full measurement set.
+    assert reading.water_quality_label is None
+
+
+# 19c. Boundary: turbidity index exactly 0 and exactly 100 both accepted;
+#      negative index rejected.
+def test_turbidity_relative_index_boundaries(db_session, seeded_stations):
+    base = {
+        "station_code": "ARK-001",
+        "device_id": "ESP32-HS-001",
+        "pH": None,
+        "tds": None,
+        "temperature": 27.0,
+        "source": "esp32",
+    }
+    for ts, value in [("2026-10-22T10:21:00Z", 0.0), ("2026-10-22T10:21:03Z", 100.0)]:
+        payload = json.dumps(dict(base, timestamp=ts, turbidity=value))
+        assert process_telemetry_payload(payload, db_session_factory=lambda: db_session) is True
+    assert db_session.query(SensorReading).count() == 2
+
+    bad = json.dumps(dict(base, timestamp="2026-10-22T10:21:06Z", turbidity=-0.5))
+    assert process_telemetry_payload(bad, db_session_factory=lambda: db_session) is False
+
+
+# 20. Authority endpoints expose provenance + diagnostics + NULL values honestly.
+def test_latest_reading_endpoint_exposes_hardware_fields(client, authority_token_headers, db_session, seeded_stations):
+    payload = json.dumps({
+        "station_code": "ARK-001",
+        "device_id": "ESP32-HS-001",
+        "timestamp": "2026-10-22T10:15:30Z",
+        "pH": None,
+        "turbidity": None,
+        "tds": None,
+        "temperature": 27.0,
+        "source": "esp32",
+        "diagnostics": HARDWARE_DIAGNOSTICS,
+    })
+    assert process_telemetry_payload(payload, db_session_factory=lambda: db_session) is True
+
+    res = client.get("/api/authority/stations/ARK-001/readings/latest", headers=authority_token_headers)
+    assert res.status_code == 200
+    data = res.json()
+    assert data["pH"] is None
+    assert data["temperature"] == 27.0
+    assert data["source"] == "esp32"
+    assert data["diagnostics"]["ph"]["calibration_status"] == "pending"
+
+    res_analysis = client.get(
+        "/api/authority/stations/ARK-001/readings/latest/analysis", headers=authority_token_headers
+    )
+    assert res_analysis.status_code == 200
+    analysis = res_analysis.json()
+    assert analysis["ph"] is None
+    assert analysis["source"] == "esp32"
+    assert analysis["ml"]["ml_processed_at"] is None  # no fabricated ML result

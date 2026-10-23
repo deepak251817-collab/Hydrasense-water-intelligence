@@ -7,3 +7,6 @@ frontend/.env
 !frontend/.env.example
 !backend/.env.example
 /.freebuff
+
+# ESP32 station secrets (copy of firmware/hydrasense_esp32/config.example.h)
+firmware/hydrasense_esp32/config.h
