@@ -41,11 +41,23 @@ class ReadingAnalysisResponse(BaseModel):
     # Unit of `turbidity`: "relative_index_0_100" (ESP32 provisional 0-100
     # index — NOT NTU), "ntu", or None = unknown.
     turbidity_unit: Optional[str] = None
+    # Dedicated analog-sensor field: relative index 0–100 (higher = cloudier).
+    # NULL for NTU rows. Never compared with NTU limits.
+    turbidity_index: Optional[float] = None
     # Firmware band for relative-index rows: CLEARER / MODERATE / CLOUDIER.
     turbidity_status: Optional[str] = None
     tds: Optional[float] = None
     temperature: Optional[float] = None
     source: str = "simulator"
     diagnostics: Optional[dict] = None
+
+    # Honest ML availability for THIS reading:
+    #   status "ok"            → `ml` carries a real stored inference result;
+    #   status "unavailable"    → `ml` fields are NULL and `message` explains
+    #                              why (e.g. "ML prediction unavailable for
+    #                              Turbidity Index readings.").
+    ml_status: str = "ok"
+    ml_unavailable_reason: Optional[str] = None
+    ml_unavailable_message: Optional[str] = None
 
     ml: MLAnalysisResponse

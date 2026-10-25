@@ -133,7 +133,7 @@ def list_my_alerts(
     (live hardware vs. labelled simulation).
     """
 
-    from app.services.alerting import reading_alerts, test_alerts
+    from app.services.alerting import alert_response, reading_alerts, test_alerts
 
     items: list = []
 
@@ -158,14 +158,25 @@ def list_my_alerts(
     for test in tests:
         items.extend(test_alerts(test))
 
-    # Most recent first, capped by the requested limit.
-    items.sort(key=lambda item: item.get("timestamp") or "", reverse=True)
-    return {
-        "total": len(items),
-        "items": items[:limit],
-        "critical_count": sum(1 for i in items if i.get("severity") == "critical"),
-        "warning_count": sum(1 for i in items if i.get("severity") == "warning"),
-    }
+    # Most recent first, capped by the requested limit; the response also
+    # carries the active threshold profile (official vs project-configured).
+    return alert_response(items, limit)
+
+
+@router.get("/alerts/profile")
+def get_alert_threshold_profile(
+    current_user: User = Depends(get_current_product_user),
+):
+    """The active, versioned alert threshold profile.
+
+    Clearly separates thresholds verified against official standards from
+    project-configured screening values, with unit, source and rationale for
+    each — so the UI can display what is configured without implying that a
+    project setting is a regulatory limit.
+    """
+    from app.services.alert_thresholds import profile_payload
+
+    return profile_payload()
 
 
 @router.post(

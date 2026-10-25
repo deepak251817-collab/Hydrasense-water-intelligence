@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from app.models.simulation import SimulationRun
 from app.models.water import SensorReading
 from app.services import simulation_service as sim
 from app.services.alerting import reading_alerts
@@ -25,10 +26,11 @@ NOW = datetime(2026, 10, 24, 10, 0, tzinfo=timezone.utc)
 
 
 @pytest.fixture(autouse=True)
-def clean_simulation_state():
-    sim.reset_state()
+def clean_simulation_state(db_session):
+    """State is persistent now: clear the singleton run row after each test."""
     yield
-    sim.reset_state()
+    db_session.query(SimulationRun).delete()
+    db_session.commit()
 
 
 def _reading(**overrides) -> SensorReading:
@@ -57,7 +59,8 @@ class TestSimulationService:
         self, db_session, seeded_water_data
     ):
         reading = sim.generate_sample(
-            db_session, seeded_water_data["station"].station_code, scenario="normal", seed=7
+            db_session, seeded_water_data["station"].station_code,
+            scenario="normal", seed=7, update_run=False,
         )
         assert reading.source == "simulator"
         assert reading.turbidity_unit == "relative_index_0_100"
@@ -82,27 +85,29 @@ class TestSimulationService:
 
     def test_seeded_generation_is_reproducible(self, db_session, seeded_water_data):
         code = seeded_water_data["station"].station_code
-        first = sim.generate_sample(db_session, code, seed=42, advance_state=False)
-        sim.reset_state()
-        second = sim.generate_sample(db_session, code, seed=42, advance_state=False)
+        first = sim.generate_sample(db_session, code, seed=42, update_run=False)
+        second = sim.generate_sample(db_session, code, seed=42, update_run=False)
         assert (first.ph, first.tds, first.temperature, first.turbidity_index) == (
             second.ph, second.tds, second.temperature, second.turbidity_index
         )
 
     def test_unseeded_generation_varies(self, db_session, seeded_water_data):
         code = seeded_water_data["station"].station_code
-        first = sim.generate_sample(db_session, code, advance_state=False)
-        second = sim.generate_sample(db_session, code, advance_state=False)
+        first = sim.generate_sample(db_session, code, update_run=False)
+        second = sim.generate_sample(db_session, code, update_run=False)
         assert (first.ph, first.tds, first.temperature, first.turbidity_index) != (
             second.ph, second.tds, second.temperature, second.turbidity_index
         )
 
     def test_gradual_deterioration_moves_one_direction(self, db_session, seeded_water_data):
         code = seeded_water_data["station"].station_code
-        sim.start(code, scenario="gradual_deterioration", seed=3)
+        sim.start(db_session, code, scenario="gradual_deterioration", seed=3)
         indexes = []
         for _ in range(6):
-            reading = sim.generate_sample(db_session, code, scenario="gradual_deterioration", seed=None)
+            reading = sim.generate_sample(
+                db_session, code, scenario="gradual_deterioration", seed=3,
+                update_run=True,
+            )
             indexes.append(reading.turbidity_index)
         assert indexes[-1] > indexes[0]
         assert all(0.0 <= value <= 100.0 for value in indexes)
@@ -110,7 +115,9 @@ class TestSimulationService:
     def test_sensor_fault_stores_null_never_a_number(self, db_session, seeded_water_data):
         code = seeded_water_data["station"].station_code
         readings = [
-            sim.generate_sample(db_session, code, scenario="sensor_fault", advance_state=False)
+            sim.generate_sample(
+                db_session, code, scenario="sensor_fault", update_run=False,
+            )
             for _ in range(4)
         ]
         values = [
@@ -147,12 +154,156 @@ class TestSimulationService:
 
     def test_state_payload_labels_samples_simulated(self, db_session, seeded_water_data):
         sim.generate_sample(
-            db_session, seeded_water_data["station"].station_code, seed=1
+            db_session, seeded_water_data["station"].station_code, seed=1,
+            update_run=False,
         )
-        payload = sim.state_payload()
+        payload = sim.state_payload(db_session)
         assert payload["simulated"] is True
+        assert payload["persistent"] is True
         assert "NOT LIVE SENSOR DATA" in payload["label"]
         assert payload["recent_samples"][0]["simulated"] is True
+
+
+class TestPersistentSimulationState:
+    """State lives in PostgreSQL: shared across workers, survives restarts."""
+
+    @staticmethod
+    def _fresh_session(db_session):
+        """A brand-new session on the same database — as a restarted app would use."""
+        from sqlalchemy.orm import sessionmaker
+        return sessionmaker(bind=db_session.get_bind())()
+
+    def test_state_is_visible_from_a_new_session(
+        self, db_session, seeded_water_data
+    ):
+        code = seeded_water_data["station"].station_code
+        sim.start(db_session, code, scenario="sudden_change", seed=9,
+                  interval_seconds=7.0)
+
+        fresh = self._fresh_session(db_session)
+        try:
+            payload = sim.state_payload(fresh)
+        finally:
+            fresh.close()
+
+        assert payload["running"] is True
+        assert payload["station_code"] == code
+        assert payload["scenario"] == "sudden_change"
+        assert payload["seed"] == 9
+        assert payload["interval_seconds"] == 7.0
+        assert payload["persistent"] is True
+
+    def test_second_worker_is_blocked_while_lease_is_valid(
+        self, db_session, seeded_water_data
+    ):
+        code = seeded_water_data["station"].station_code
+        sim.start(db_session, code, seed=1)  # lease goes to this process
+        # Another worker must not generate while our lease is unexpired.
+        assert sim.claim_lease(db_session, "worker-other") is False
+        # The owner renews its own lease.
+        assert sim.claim_lease(db_session, sim.WORKER_ID) is True
+        # No other worker appears as owner.
+        assert sim.get_run(db_session).worker_id == sim.WORKER_ID
+
+    def test_expired_lease_is_taken_over_by_another_worker(
+        self, db_session, seeded_water_data
+    ):
+        from datetime import datetime as dt
+        code = seeded_water_data["station"].station_code
+        sim.start(db_session, code, seed=1)
+        run = sim.get_run(db_session)
+        run.lease_expires_at = dt.now(timezone.utc) - timedelta(seconds=1)
+        db_session.commit()
+        assert sim.claim_lease(db_session, "worker-other") is True
+        assert sim.get_run(db_session).worker_id == "worker-other"
+
+    def test_paused_run_grants_no_lease(self, db_session, seeded_water_data):
+        code = seeded_water_data["station"].station_code
+        sim.start(db_session, code, seed=1)
+        sim.pause(db_session)
+        assert sim.claim_lease(db_session, sim.WORKER_ID) is False
+        run = sim.get_run(db_session)
+        assert run.status == "paused"
+        assert run.worker_id is None and run.lease_expires_at is None
+
+    def test_generation_advances_persistent_counters(
+        self, db_session, seeded_water_data
+    ):
+        code = seeded_water_data["station"].station_code
+        sim.start(db_session, code, seed=5)
+        sim.generate_sample(db_session, code, seed=5, update_run=True)
+        run = sim.get_run(db_session)
+        assert run.samples_generated == 1
+        assert run.step == 1
+        assert run.last_sample_at is not None
+
+    def test_unknown_station_on_start_is_rejected(
+        self, db_session, seeded_water_data
+    ):
+        with pytest.raises(ValueError):
+            sim.start(db_session, "NO-SUCH-STATION")
+
+
+class TestSimulationPersistenceAPI:
+    def test_start_persists_across_app_restarts(
+        self, client, authority_token_headers, seeded_water_data
+    ):
+        from fastapi.testclient import TestClient
+        from app.main import app
+
+        code = seeded_water_data["station"].station_code
+        res = client.post(
+            "/api/simulation/start",
+            headers=authority_token_headers,
+            json={
+                "station_code": code,
+                "scenario": "gradual_deterioration",
+                "seed": 11,
+                "interval_seconds": 30,
+            },
+        )
+        assert res.status_code == 200, res.text
+        assert res.json()["running"] is True
+
+        # A new TestClient is a fresh application lifecycle (restart).
+        with TestClient(app) as restarted:
+            state = restarted.get(
+                "/api/simulation/state", headers=authority_token_headers
+            ).json()
+        assert state["running"] is True
+        assert state["station_code"] == code
+        assert state["scenario"] == "gradual_deterioration"
+        assert state["seed"] == 11
+
+    def test_concurrent_start_requests_end_consistent(
+        self, client, authority_token_headers, seeded_water_data
+    ):
+        code = seeded_water_data["station"].station_code
+        payload = {"station_code": code, "scenario": "normal", "interval_seconds": 60}
+        first = client.post(
+            "/api/simulation/start", headers=authority_token_headers, json=payload
+        )
+        second = client.post(
+            "/api/simulation/start", headers=authority_token_headers,
+            json={**payload, "scenario": "sudden_change", "seed": 4},
+        )
+        assert first.status_code == 200 and second.status_code == 200
+        # Exactly one singleton row holds the latest configuration.
+        from app.models.simulation import SimulationRun
+        state = second.json()
+        assert state["scenario"] == "sudden_change" and state["seed"] == 4
+        assert state["running"] is True
+        assert state["samples_generated"] == 0  # restart resets counters
+
+    def test_start_rejects_unknown_station(
+        self, client, authority_token_headers
+    ):
+        res = client.post(
+            "/api/simulation/start",
+            headers=authority_token_headers,
+            json={"station_code": "NOPE"},
+        )
+        assert res.status_code == 400
 
 
 class TestSimulationAPI:
@@ -205,12 +356,19 @@ class TestReadingAlerts:
         ph = next(a for a in alerts if a["parameter"] == "ph")
         assert ph["severity"] == "critical"
         assert ph["value"] == 5.1
-        assert "6.5" in ph["reference"]
+        # The critical band comes from the project-configured danger entry,
+        # and is labelled as such — not presented as an official BIS limit.
+        assert "6.0" in ph["reference"]
+        assert ph["threshold_classification"] == "project_configured"
+        assert ph["threshold_profile_version"]
 
     def test_ph_just_outside_range_raises_warning(self):
         alerts = reading_alerts(_reading(ph=8.7), now=NOW)
         ph = next(a for a in alerts if a["parameter"] == "ph")
         assert ph["severity"] == "warning"
+        # The 6.5–8.5 warning range is the verified official reference.
+        assert "6.5" in ph["reference"]
+        assert ph["threshold_classification"] == "official_standard"
 
     def test_tds_danger_and_watch_levels(self):
         critical = next(
@@ -255,6 +413,64 @@ class TestReadingAlerts:
 
     def test_no_reading_returns_no_alerts(self):
         assert reading_alerts(None) == []
+
+
+class TestThresholdProfile:
+    """The active profile separates official standards from project settings."""
+
+    @staticmethod
+    def _profile():
+        from app.services.alert_thresholds import profile_payload
+        return profile_payload()
+
+    def test_profile_is_versioned_and_classified(self):
+        payload = self._profile()
+        assert payload["profile_version"] == "alert-thresholds-2026.10.1"
+        assert payload["official_count"] >= 3
+        assert payload["project_configured_count"] >= 2
+        assert "must never be presented as BIS, WHO" in payload["disclaimer"]
+
+        by_key = {t["key"]: t for t in payload["thresholds"]}
+        assert by_key["ph_range"]["is_official_standard"] is True
+        assert "BIS IS 10500" in by_key["ph_range"]["source"]
+        assert by_key["tds_acceptable"]["is_official_standard"] is True
+        assert by_key["ph_danger"]["is_official_standard"] is False
+        assert by_key["turbidity_index_bands"]["is_official_standard"] is False
+        # Every project-configured entry carries a rationale.
+        for entry in payload["thresholds"]:
+            if not entry["is_official_standard"]:
+                assert entry["rationale"], entry["key"]
+            assert entry["unit"]
+            assert entry["source"]
+
+    def test_index_thresholds_are_never_expressed_in_ntu(self):
+        payload = self._profile()
+        for entry in payload["thresholds"]:
+            if entry["parameter"] != "turbidity_index":
+                continue
+            assert "ntu" not in entry["unit"].lower()
+            conditions = entry["warning_conditions"] + entry["critical_conditions"]
+            assert conditions
+            for condition in conditions:
+                # Index conditions live on the 0–100 scale, never on 1/5 NTU.
+                assert 0 < condition["value"] <= 100
+                assert condition["value"] not in (1.0, 5.0)
+
+    def test_alert_response_includes_the_profile(self):
+        items = reading_alerts(_reading(ph=5.1), now=NOW)
+        from app.services.alerting import alert_response
+        payload = alert_response(items, limit=10)
+        assert payload["threshold_profile"]["profile_version"]
+        assert payload["critical_count"] >= 1
+        # Every threshold-derived alert states its classification.
+        for alert in payload["items"]:
+            if alert["threshold_key"]:
+                assert alert["threshold_classification"] in (
+                    "official_standard", "project_configured"
+                )
+
+    def test_profile_endpoint_requires_a_product_user(self, client):
+        assert client.get("/api/product/alerts/profile").status_code == 401
 
 
 class TestProductAlertsAPI:

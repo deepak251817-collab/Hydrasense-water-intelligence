@@ -418,6 +418,15 @@ Authority → **Simulation** (`/authority/simulation`) drives
   screening results and alerts update from them while remaining distinguishable
   from real ESP32 readings.
 
+State is **persistent and shared**: Start / Pause / Generate and the selected
+scenario live in the `simulation_runs` singleton row (migration
+`c1d2e3f4a5b6`, PostgreSQL), not in process memory, so the controls stay
+consistent across API workers and frontend sessions and survive a restart. Only
+the worker holding an unexpired generation lease (15 s, renewed on every
+sample) produces samples, so multiple Uvicorn workers never run duplicate
+simulation loops. A seeded run derives each step's RNG from `(seed, step)` and
+is therefore identical in any process.
+
 ### Danger-level alerts (to the product user)
 
 `backend/app/services/alerting.py` derives alerts from real data only:
@@ -433,6 +442,17 @@ whether the source was live or simulated, and a severity:
 
 The user dashboard shows these alerts prominently above the device cards.
 Turbidity alerts always state that the index is not an NTU measurement.
+
+Every number comes from one versioned source: `GET /api/product/alerts/profile`
+returns the active **alert threshold profile** (`alert-thresholds-2026.10.1`)
+from `backend/app/services/alert_thresholds.py`. Each entry carries its value,
+unit, trigger condition, classification — `official_standard` (verified against
+BIS IS 10500:2012 with Amendment 4, citation included) or
+`project_configured` (an illustrative project setting that requires local
+validation and is **never** presented as a BIS, WHO or government-approved
+limit) — plus source and rationale, and the profile disclaimer is served with
+it and rendered in the UI. Turbidity entries are **relative-index bands only**
+and are never expressed in or compared with NTU.
 
 ### Standards reference dataset
 
@@ -455,6 +475,37 @@ Each station's public page is `/public/source/<station_code>`; the QR card on Li
 
 `python ml/scripts/build_evaluation_report.py` loads the saved model artifacts, scores the held-out test splits, and writes a machine-readable report to `ml/reports/evaluation_report.json` plus a human-readable `ml/reports/evaluation_report.md`. Every metric is computed at generation time from repository artifacts — nothing is hardcoded. The authority-only endpoint `GET /api/authority/ml/status` serves this report together with the live model load state, and the Analytics dashboard renders it in the **Model Health & Evaluation** card. If the report has not been generated, the API returns `evaluation_available: false` and the UI says so — no placeholder metrics are ever shown.
 
+### Baseline forecasting (authority-only)
+
+`GET /api/authority/stations/{code}/forecast?horizon_hours=1..168` (default 24)
+returns a validated, honestly gated forecast per parameter:
+
+- **Readiness gate.** Before any model runs, the stored history is inspected per
+  parameter (≥ 96 valid samples spanning ≥ 7 days). Short history ⇒
+  `status: "unavailable"` with observed-vs-required numbers — the data pipeline
+  and UI state exist, but forecasting is not claimed.
+- **Model + time-aware evaluation.** A transparent Ridge model (normalised time
+  index + previous reading, forecast recursively) is trained per parameter on a
+  chronological split (last 20% held out, one-step-ahead) and compared with a
+  naive persistence forecast; MAE and RMSE for both are reported.
+- **Evaluation gate.** Forecast points are returned only when the model's
+  holdout MAE strictly beats persistence. Otherwise the parameter carries
+  `model_not_better_than_baseline` with its metrics but **no forecast numbers**.
+- **Uncertainty.** The band is the holdout MAE, labelled as a constant-width
+  empirical approximation — not a probabilistic interval.
+- **Traceability.** The response reports the data-source mix (`simulator` /
+  `esp32`) of the training history and flags forecasts trained on simulated
+  rows as demonstration output, not real-world evidence.
+- **Units.** Turbidity is forecast in its dominant stored unit; a relative
+  0–100 index is forecast as an index and never described as NTU.
+
+The Analytics dashboard card (`PredictionCard`) renders this endpoint with a
+configurable horizon (6/12/24/48 h), per-parameter readiness/metrics, an
+explicit “Forecasting unavailable” state, and a fixed footer stating that
+forecasts are model outputs, not measurements. Service:
+`backend/app/services/forecasting.py`; tests:
+`backend/tests/test_forecasting.py` and `frontend/src/test/forecast.test.tsx`.
+
 ---
 
 ## Testing
@@ -465,6 +516,9 @@ python -m pytest backend/tests -v
 
 # Focused assessment tests (TDS/pH boundaries, stability, calibration, uses)
 cd backend && python -m pytest tests/test_product_screening.py tests/test_product_tests.py -v
+
+# Forecasting readiness/evaluation, simulation persistence, alert profile, ML availability
+cd backend && python -m pytest tests/test_forecasting.py tests/test_simulation_and_alerts.py tests/test_ml_availability.py -v
 
 # ML pipeline (140+ tests: leakage, reproducibility, persistence, SHAP)
 python -m pytest ml/tests -v
@@ -495,6 +549,9 @@ Base URL: `http://127.0.0.1:8000/api` — interactive docs at [`/docs`](http://1
 | `/api/authority/ml/status` | `AUTHORITY` | model load state + computed evaluation report |
 | `/api/authority/stations/{code}/suitability` | `AUTHORITY` | BIS/CPCB suitability for the latest reading |
 | `/api/authority/stations/{code}/live-assessment?use=drinking` | `AUTHORITY` | Stable four-sensor assessment for the selected use (`drinking`, `domestic`, `irrigation`, `swimming`, `aquaculture`) |
+| `/api/authority/stations/{code}/forecast?horizon_hours=24` | `AUTHORITY` | Honest baseline forecast — points only when holdout evaluation beats persistence, otherwise `status: unavailable` + reason |
+| `/api/simulation/start|pause|generate|state` | `AUTHORITY` | Persistent three-river simulation controls (PostgreSQL-backed, lease-guarded) |
+| `/api/product/alerts`, `/api/product/alerts/profile` | `PRODUCT_USER` | Danger-level alerts + the active versioned threshold profile (official vs project-configured) |
 | `/api/product/devices`, `/api/product/activate` | `PRODUCT_USER` | Owned product devices and product-code activation |
 | `POST /api/product/tests` | `PRODUCT_USER` | Run a live (stable window) or explicitly labelled demo test and persist it |
 | `GET /api/product/tests`, `/api/product/tests/{id}` | `PRODUCT_USER` | Private test history and full saved assessment |
@@ -540,7 +597,20 @@ This project deliberately constrains its claims:
 - **Forecasting honesty.** The XGBoost deterioration target is a rule-based indicator on a single USGS station (~5 weeks synchronized); temporal performance drop from validation to test is documented, not tuned away.
 - **No fabricated results.** Missing ML artifacts, failed inference, or pre-ML readings all produce NULL ML fields, rendered in the UI as "Analysis unavailable".
 - **Turbidity is not always NTU.** ESP32 hardware reports a **provisional relative index 0–100** anchored to two sample-based sensor voltages (≈0.354 V clear, ≈0.273 V cloudy). It is a relative trend indicator, **not** a calibrated NTU measurement and **not** a safety verdict; converting it to NTU requires the two-point calibration in [firmware/README.md](firmware/README.md) §10.
-- **Relative turbidity is excluded from ML.** The models were trained on NTU-style turbidity, so relative-index readings are stored and displayed but deliberately keep NULL ML fields.
+- **Relative turbidity is excluded from ML.** The models were trained on NTU-style turbidity, so relative-index readings are stored and displayed but deliberately keep NULL ML fields — reported as “ML prediction unavailable for Turbidity Index readings.” rather than a silent gap. Data requirements for a future index-trained model are documented in [docs/TURBIDITY_INDEX_ML.md](docs/TURBIDITY_INDEX_ML.md).
+
+**Resolved in this pass**
+
+- **Simulation state is persistent and shared.** The previous per-process in-memory state was replaced by the `simulation_runs` singleton row (migration `c1d2e3f4a5b6`) with a per-worker generation lease: controls stay consistent across API workers and restarts, and no duplicate simulation loops can run.
+- **Alert thresholds are transparent.** Every alert number comes from one versioned, sourced profile that separates `official_standard` (BIS-cited) from `project_configured` (illustrative, requires local validation), served by `GET /api/product/alerts/profile` and shown in the UI; turbidity-index alerts are never compared with NTU limits.
+- **ML availability is explicit per reading.** Relative-index readings report “ML prediction unavailable for Turbidity Index readings.” with the reason, and stale labels are never surfaced next to an “unavailable” status.
+- **Forecasting exists as a validated baseline capability** with readiness gates, time-aware holdout evaluation against persistence, and honest unavailable states (see *Baseline forecasting* above).
+
+**Remaining limitations**
+
+- **No probabilistic or trained forecasting model.** Only the Ridge baseline is implemented; there are no confidence intervals (the band is the holdout MAE), no exogenous inputs (e.g. rainfall), and parameters with short or non-predictable history report `unavailable` rather than numbers. Stations without enough stored history (currently `CAU-001`, `VRS-001`) show the readiness state instead of a forecast.
+- **No ML for turbidity-index readings.** No representative labelled index dataset exists yet, so the exclusion is retained by design; the training workflow is documented in [docs/TURBIDITY_INDEX_ML.md](docs/TURBIDITY_INDEX_ML.md).
+- **No incident/inspection workflow, rate limiting, or drift monitoring** — see [docs/FEATURE_STATUS.md](docs/FEATURE_STATUS.md) for the full open-findings table (security findings in §6 remain open unless listed above).
 
 ---
 

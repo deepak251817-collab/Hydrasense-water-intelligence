@@ -31,11 +31,11 @@ class SimulationSample(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    station_code: str
+    station_code: Optional[str] = None
     source_code: Optional[str] = None
-    timestamp: str
-    scenario: str
-    step: int
+    timestamp: Optional[str] = None
+    scenario: Optional[str] = None
+    step: int = 0
     ph: Optional[float] = None
     tds: Optional[float] = None
     temperature: Optional[float] = None
@@ -60,4 +60,8 @@ class SimulationStateResponse(BaseModel):
     simulated: bool = True
     label: str = "SIMULATED DATA — NOT LIVE SENSOR DATA"
     scenarios: List[str]
+    # Persistence / duplicate-loop visibility: state lives in PostgreSQL and
+    # only the lease-holding worker generates samples.
+    persistent: bool = True
+    worker_holding_lease: bool = False
     recent_samples: List[SimulationSample]

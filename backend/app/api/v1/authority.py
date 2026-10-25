@@ -6,12 +6,15 @@ from app.api.deps import get_current_authority
 from app.core.database import get_db
 from app.models.user import User
 from app.models.water import MonitoringStation, SensorReading
+from app.schemas.forecast import ForecastResponse
 from app.schemas.ml_analysis import MLAnalysisResponse, ReadingAnalysisResponse
 from app.schemas.ml_status import MLStatusResponse
 from app.schemas.product_test import LiveAssessmentResponse
 from app.schemas.suitability import StationSuitabilityResponse
 from app.schemas.user import UserResponse
+from app.services.forecasting import build_forecast
 from app.services.live_assessment_service import build_live_assessment
+from app.services.ml_availability import availability_for
 from app.services.ml_service import ml_service
 from app.services.ml_status_service import build_ml_status
 from app.services.water_suitability import (
@@ -26,6 +29,57 @@ from app.schemas.water import (
 )
 
 router = APIRouter(prefix="/authority", tags=["Authority"])
+
+
+def _ml_analysis_or_empty(reading: SensorReading, status: str) -> MLAnalysisResponse:
+    """Stored ML results, or an all-null payload when they must not be shown.
+
+    A legacy row can carry a stale label (e.g. written before index readings
+    were excluded from the NTU models). Surfacing that label next to an
+    "unavailable" status would contradict the honesty guarantee, so the ML
+    fields are nulled whenever availability is not OK.
+    """
+    if status != "ok":
+        return MLAnalysisResponse()
+    return MLAnalysisResponse(
+        anomaly_label=reading.anomaly_label,
+        anomaly_score=reading.anomaly_score,
+        water_quality_label=reading.water_quality_label,
+        safe_probability=reading.safe_probability,
+        unsafe_probability=reading.unsafe_probability,
+        ml_processed_at=reading.ml_processed_at,
+    )
+
+
+def _reading_analysis(reading: SensorReading, station_code: str) -> ReadingAnalysisResponse:
+    """Reading + honest ML availability for the analysis endpoints.
+
+    `ml_status`/`ml_unavailable_*` explain WHY an ML result is absent (for
+    example "ML prediction unavailable for Turbidity Index readings."), so the
+    UI never has to guess and never fabricates a default verdict.
+    """
+    availability = availability_for(reading)
+    return ReadingAnalysisResponse(
+        reading_id=reading.id,
+        station_id=reading.station_id,
+        station_code=station_code,
+        device_id=reading.device_id,
+        timestamp=reading.timestamp,
+        created_at=reading.created_at,
+        ph=reading.ph,
+        turbidity=reading.turbidity,
+        turbidity_unit=reading.turbidity_unit,
+        turbidity_index=reading.turbidity_index,
+        turbidity_status=reading.turbidity_status,
+        tds=reading.tds,
+        temperature=reading.temperature,
+        source=reading.source,
+        diagnostics=reading.diagnostics,
+        ml_status=availability["status"],
+        ml_unavailable_reason=availability["reason"],
+        ml_unavailable_message=availability["message"],
+        ml=_ml_analysis_or_empty(reading, availability["status"]),
+    )
 
 
 @router.get("/me", response_model=UserResponse)
@@ -150,6 +204,34 @@ def get_all_monitoring_stations(
     return stations
 
 
+@router.get("/stations/{station_code}/forecast", response_model=ForecastResponse)
+def get_station_forecast(
+    station_code: str,
+    horizon_hours: int = Query(24, ge=1, le=168),
+    current_user: User = Depends(get_current_authority),
+    db: Session = Depends(get_db),
+):
+    """Honest baseline forecast for one station (authority-only).
+
+    Returns forecast points only for parameters whose model beat a naive
+    persistence baseline on a chronological holdout. When history is
+    insufficient or evaluation does not support the models, the response
+    reports ``status = unavailable`` with an explicit reason instead of
+    numbers.
+    """
+    station = (
+        db.query(MonitoringStation)
+        .filter(MonitoringStation.station_code == station_code)
+        .first()
+    )
+    if not station:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Monitoring station with code '{station_code}' not found.",
+        )
+    return build_forecast(db, station, horizon_hours=horizon_hours)
+
+
 @router.get("/stations/{station_code}/readings/latest/analysis", response_model=ReadingAnalysisResponse)
 def get_latest_station_reading_analysis(
     station_code: str,
@@ -176,30 +258,7 @@ def get_latest_station_reading_analysis(
             detail=f"No sensor readings found for station '{station_code}'."
         )
 
-    return ReadingAnalysisResponse(
-        reading_id=reading.id,
-        station_id=reading.station_id,
-        station_code=station.station_code,
-        device_id=reading.device_id,
-        timestamp=reading.timestamp,
-        created_at=reading.created_at,
-        ph=reading.ph,
-        turbidity=reading.turbidity,
-        turbidity_unit=reading.turbidity_unit,
-        turbidity_status=reading.turbidity_status,
-        tds=reading.tds,
-        temperature=reading.temperature,
-        source=reading.source,
-        diagnostics=reading.diagnostics,
-        ml=MLAnalysisResponse(
-            anomaly_label=reading.anomaly_label,
-            anomaly_score=reading.anomaly_score,
-            water_quality_label=reading.water_quality_label,
-            safe_probability=reading.safe_probability,
-            unsafe_probability=reading.unsafe_probability,
-            ml_processed_at=reading.ml_processed_at,
-        ),
-    )
+    return _reading_analysis(reading, station.station_code)
 
 
 @router.get("/stations/{station_code}/readings/latest", response_model=LatestSensorReadingResponse)
@@ -312,28 +371,5 @@ def get_reading_ml_analysis(
             detail=f"Sensor reading with id '{reading_id}' not found."
         )
 
-    return ReadingAnalysisResponse(
-        reading_id=reading.id,
-        station_id=reading.station_id,
-        station_code=reading.station.station_code,
-        device_id=reading.device_id,
-        timestamp=reading.timestamp,
-        created_at=reading.created_at,
-        ph=reading.ph,
-        turbidity=reading.turbidity,
-        turbidity_unit=reading.turbidity_unit,
-        turbidity_status=reading.turbidity_status,
-        tds=reading.tds,
-        temperature=reading.temperature,
-        source=reading.source,
-        diagnostics=reading.diagnostics,
-        ml=MLAnalysisResponse(
-            anomaly_label=reading.anomaly_label,
-            anomaly_score=reading.anomaly_score,
-            water_quality_label=reading.water_quality_label,
-            safe_probability=reading.safe_probability,
-            unsafe_probability=reading.unsafe_probability,
-            ml_processed_at=reading.ml_processed_at,
-        ),
-    )
+    return _reading_analysis(reading, reading.station.station_code)
 

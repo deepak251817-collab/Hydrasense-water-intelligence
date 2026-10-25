@@ -150,8 +150,12 @@ Never start the backend with `python run_server.py`. Detailed setup: [README.md]
 2. **Benchmark provenance missing** and the label is a deterministic rule; field accuracy unknown.
 3. **XGBoost is offline only**, single station, ~5 weeks, balanced accuracy 0.54.
 4. **Much of the authority dashboard is mock UI** (five pages, plus the top board of Live Monitoring); station detail is keyed by mock ids.
-5. **No alerting, incident, inspection, lab or notification backend**; those pages are prototypes.
-6. **No product-user reading submission** — the personal check flow is simulated client-side.
+5. **Incident, inspection, lab and notification backends are missing**; those pages are
+   prototypes. (Alerting **was added**: `GET /api/product/alerts` + a versioned threshold profile
+   that separates official BIS values from project-configured ones.)
+6. **Product-user reading submission is implemented** — `POST /api/product/tests` accepts a stable
+   live window (or a clearly labelled demo) and `POST /api/product/activate` binds codes with
+   ownership checks; the Activate, check-water and history screens call them.
 7. **Hardware unverified**; pH/TDS uncalibrated by default; turbidity is a relative index, not NTU.
 8. **Security gaps**: role self-selection at registration, permissive CORS, default JWT secret, no
    rate limiting, tokens in `localStorage`.
@@ -160,6 +164,27 @@ Never start the backend with `python run_server.py`. Detailed setup: [README.md]
     and the audit, not a large cleanup count.
 
 ## 11. The five most important remaining tasks (ranked by urgency)
+
+> **Status update (2026-10-25).**
+> - **Task 1 — partially resolved.** Public registration now rejects any role other than
+>   `PRODUCT_USER` with a 403 (regression-tested in `tests/test_product_tests.py`). The tail of the
+>   task is still open: CORS remains `allow_origins=["*"]` with credentials, and the JWT secret
+>   still defaults to a literal in code.
+> - **Task 2 — open.** Dataset provenance (`SOURCES.md`, fetch script) not added.
+> - **Task 3 — open.** The Isolation Forest still ships on the tiny telemetry split; wording is
+>   guarded ("unusual sensor pattern", no detection claims) but no retraining happened.
+> - **Task 4 — partially resolved.** Analytics now uses the real
+>   `/authority/stations/{code}/forecast` gated forecast card and an honest evaluation explainer
+>   (the fabricated SHAP grid was removed), and per-reading ML availability messages are explicit.
+>   Command Center, Live Monitoring's upper board, Water Sources and Station Detail still mix
+>   mock data; the incidents/inspections/lab pages remain labelled prototypes.
+> - **Task 5 — resolved** by a different shape: instead of a separate `/product/readings`, the
+>   readings travel with `POST /api/product/tests` (stable-window validation, ownership checks,
+>   full assessment persisted), and `POST /api/product/activate` is implemented and tested.
+>
+> Also resolved since the audit: persistent multi-worker simulation state, the versioned alert
+> threshold profile, validated baseline forecasting with holdout gating, and the turbidity-index
+> ML exclusion message (workflow documented in `docs/TURBIDITY_INDEX_ML.md`).
 
 ### 1. Close the privilege-escalation hole (minutes, highest urgency)
 `POST /api/auth/register` honours a caller-supplied `role`, so anyone can create an authority

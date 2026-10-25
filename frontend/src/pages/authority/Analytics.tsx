@@ -17,13 +17,13 @@ export default function Analytics() {
         <div>
           <div className="inline-flex items-center gap-2 rounded-full bg-cyan-50 px-2.5 py-1 text-xs font-bold text-cyan-800 border border-cyan-200">
             <LineChart className="h-3.5 w-3.5 text-cyan-700" />
-            <span>AI Predictive Analytics Engine</span>
+            <span>Forecast &amp; Model Status</span>
           </div>
           <h1 className="mt-2 text-2xl font-bold tracking-tight text-slate-900">
-            Predictive Analytics & Deterioration Forecast
+            Baseline Forecast &amp; Evaluation
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            Statistical trend projections, time-series anomaly correlation, and AI risk scoring.
+            Time-aware baseline forecasts with holdout evaluation — forecast values are shown only when the evaluation supports them.
           </p>
         </div>
 
@@ -53,57 +53,36 @@ export default function Analytics() {
         </div>
       </div>
 
-      {/* Model Parameter Breakdown & SHAP Placeholder */}
+      {/* How the forecast is evaluated — honest methodology, no fabricated numbers */}
       <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs space-y-4">
         <div className="flex items-center justify-between border-b border-slate-100 pb-3">
           <div className="flex items-center gap-2">
             <Sparkles className="h-4.5 w-4.5 text-cyan-600" />
             <h3 className="text-sm font-bold text-slate-900">
-              AI Explainability & Feature Contribution Breakdown (SHAP Placeholder)
+              How the forecast is evaluated
             </h3>
           </div>
           <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-            Model: GradientBoost-TimeSeries-v1.4
+            Ridge baseline • chronological holdout
           </span>
         </div>
 
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="rounded-xl border border-slate-100 bg-slate-50 p-4">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Turbidity Surge</span>
-            <div className="mt-1 flex items-baseline justify-between">
-              <span className="text-xl font-extrabold text-red-600">+38.4%</span>
-              <span className="text-[10px] font-bold text-red-700 bg-red-100 px-1.5 py-0.5 rounded">High Impact</span>
-            </div>
-            <p className="text-[11px] text-slate-500 mt-1">Strongest driver for predicted water deterioration.</p>
-          </div>
-
-          <div className="rounded-xl border border-slate-100 bg-slate-50 p-4">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Dissolved Oxygen Depletion</span>
-            <div className="mt-1 flex items-baseline justify-between">
-              <span className="text-xl font-extrabold text-orange-600">-24.1%</span>
-              <span className="text-[10px] font-bold text-orange-700 bg-orange-100 px-1.5 py-0.5 rounded">Major Impact</span>
-            </div>
-            <p className="text-[11px] text-slate-500 mt-1">Accelerates biological hypoxic risk rating.</p>
-          </div>
-
-          <div className="rounded-xl border border-slate-100 bg-slate-50 p-4">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Conductivity / TDS Drift</span>
-            <div className="mt-1 flex items-baseline justify-between">
-              <span className="text-xl font-extrabold text-amber-600">+14.2%</span>
-              <span className="text-[10px] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded">Moderate</span>
-            </div>
-            <p className="text-[11px] text-slate-500 mt-1">Indicates external runoff and dissolved salts influx.</p>
-          </div>
-
-          <div className="rounded-xl border border-slate-100 bg-slate-50 p-4">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Temperature Baseline</span>
-            <div className="mt-1 flex items-baseline justify-between">
-              <span className="text-xl font-extrabold text-slate-700">+1.2%</span>
-              <span className="text-[10px] font-bold text-slate-600 bg-slate-200 px-1.5 py-0.5 rounded">Neutral</span>
-            </div>
-            <p className="text-[11px] text-slate-500 mt-1">Ambient seasonal temperature within tolerance bands.</p>
-          </div>
-        </div>
+        <p className="text-xs leading-relaxed text-slate-600">
+          Forecasts come from the backend&apos;s baseline model (Ridge on a time index
+          plus the previous reading), trained per parameter and evaluated on a
+          chronological holdout — the most recent 20% of stored history — against
+          a naive persistence forecast. Forecast values are published only when
+          the model&apos;s holdout MAE beats persistence; otherwise the forecast card
+          reports &quot;Forecasting unavailable&quot; with the reason. When history is
+          too short, the card shows observed-versus-required readiness numbers
+          instead of numbers claimed as forecasts.
+        </p>
+        <p className="text-[11px] text-slate-500 italic">
+          SHAP-style feature attribution is not implemented in this project, so
+          no attribution percentages are shown. Forecasts are model outputs —
+          not measurements, not laboratory results, and not a safety
+          certification.
+        </p>
       </div>
     </div>
   );

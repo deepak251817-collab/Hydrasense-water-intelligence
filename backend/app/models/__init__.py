@@ -7,6 +7,7 @@ from app.models.water import (
     WaterSuitabilityAssessment,
 )
 from app.models.water_test import LiveWaterAssessment, ProductWaterTest
+from app.models.simulation import SimulationRun
 
 __all__ = [
     "User",
@@ -18,4 +19,5 @@ __all__ = [
     "WaterSuitabilityAssessment",
     "ProductWaterTest",
     "LiveWaterAssessment",
+    "SimulationRun",
 ]

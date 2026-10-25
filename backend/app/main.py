@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1 import api_v1_router
+from app.api.v1.simulation import start_simulation_poller, stop_simulation_poller
 from app.core.config import settings
 from app.services.ml_service import ml_service
 from app.services.mqtt_service import mqtt_service
@@ -33,10 +34,21 @@ async def lifespan(app: FastAPI):
         mqtt_service.start()
     except Exception as err:
         logger.error(f"MQTT subscriber startup error: {err}")
-    
+
+    # Startup: per-worker simulation generation loop. State lives in the
+    # `simulation_runs` row; the lease ensures only one worker generates.
+    try:
+        start_simulation_poller()
+    except Exception as err:
+        logger.error(f"Simulation poller startup error: {err}")
+
     yield
-    
-    # Shutdown: stop MQTT loop and disconnect
+
+    # Shutdown: stop the simulation loop, then the MQTT loop
+    try:
+        stop_simulation_poller()
+    except Exception as err:
+        logger.error(f"Simulation poller shutdown error: {err}")
     logger.info("Shutting down HydraSense API and stopping MQTT subscriber...")
     try:
         mqtt_service.stop()

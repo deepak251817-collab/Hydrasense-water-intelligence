@@ -1,30 +1,26 @@
-"""Three-river simulation mode — SIMULATED DATA, NOT LIVE SENSOR DATA.
+"""Three-river simulation mode — persistent, shared across API workers.
 
 Generates plausible randomised readings for exactly the four sensors this
 project supports (pH, TDS, temperature, turbidity index) for the three
-demonstration rivers:
+demonstration rivers: Arkavathi, Cauvery and Vrishabhavathi.
 
-- Arkavathi River
-- Cauvery River
-- Vrishabhavathi River
+State lives in the ``simulation_runs`` singleton row (PostgreSQL), NOT in
+process memory, so Start / Pause / Generate / scenario selection are consistent
+across API workers and frontend sessions and survive an application restart.
+
+Duplicate-loop protection: a worker may only generate while it holds an
+unexpired lease on that row (``worker_id`` + ``lease_expires_at``). Leases are
+renewed on every generation and expire if a worker dies, so multiple workers
+never run two generation loops at once.
 
 Every sample is persisted to ``sensor_readings`` with ``source = "simulator"``
-so it is always distinguishable from physical ESP32 telemetry (``source =
-"esp32"``). Simulated readings are never mixed into ML ground truth: the
-relative-index turbidity unit keeps them out of the NTU-trained inference path,
-exactly like hardware index rows.
+and diagnostics label ``SIMULATED DATA — NOT LIVE SENSOR DATA``, so simulated
+readings stay distinguishable from physical ESP32 telemetry.
 
-Scenarios
----------
-``normal``                  random variation around the river baseline
-``gradual_deterioration``   steady drift toward cloudier, higher-TDS water
-``sudden_change``           stable, then an abrupt step change
-``sensor_fault``            one sensor stops reporting (stored as NULL — a
-                            sensor fault never fabricates a value)
+Reproducibility: with a ``seed``, the RNG for a step is derived from
+``(seed, step)`` — identical for any worker, in any process, at any time.
 
-Reproducibility: pass ``seed`` for a repeatable sequence (used by tests).
-
-The turbidity index follows the firmware's documented direction and bands
+Turbidity index follows the firmware's documented direction and bands
 (``firmware/hydrasense_esp32``): 0-100, higher = cloudier,
 CLEARER < 30, MODERATE 30-54, CLOUDIER >= 55. It is never NTU.
 """
@@ -32,12 +28,13 @@ CLEARER < 30, MODERATE 30-54, CLOUDIER >= 55. It is never NTU.
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
+from app.models.simulation import SimulationRun
 from app.models.water import MonitoringStation, SensorReading
 from app.services.water_suitability import assess_reading, persist_assessments
 
@@ -49,12 +46,16 @@ SCENARIOS = (
 )
 
 DEFAULT_INTERVAL_SECONDS = 5.0
+# How long one worker's generation lease is valid without renewal. Long enough
+# to cover a slow sample, short enough for another worker to take over quickly.
+LEASE_SECONDS = 15
 MAX_KEPT_SAMPLES = 50
+RUN_ID = 1  # singleton row
 
 TURBIDITY_UNIT_RELATIVE = "relative_index_0_100"
 
 # Demonstration baselines per river (plausible surface-water ranges only).
-# These are SIMULATED starting points, not measured field values.
+# SIMULATED starting points, not measured field values.
 RIVER_BASELINES: Dict[str, Dict[str, float]] = {
     "ARKAVATHI": {"ph": 7.2, "tds": 320.0, "temperature": 26.5, "turbidity_index": 26.0},
     "CAUVERY": {"ph": 7.4, "tds": 280.0, "temperature": 27.2, "turbidity_index": 20.0},
@@ -63,6 +64,9 @@ RIVER_BASELINES: Dict[str, Dict[str, float]] = {
 DEFAULT_BASELINE = {"ph": 7.2, "tds": 320.0, "temperature": 26.5, "turbidity_index": 30.0}
 
 FAULT_SENSORS = ("temperature", "tds", "ph", "turbidity_index")
+
+# Per-process identity for lease ownership (unique per worker/process).
+WORKER_ID = f"worker-{uuid.uuid4().hex[:12]}"
 
 
 def turbidity_band(index: float) -> str:
@@ -78,53 +82,138 @@ def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
 
 
-@dataclass
-class SimulationState:
-    """Process-wide simulation control state (demo controls, not user data)."""
-
-    running: bool = False
-    station_code: Optional[str] = None
-    source_code: Optional[str] = None
-    scenario: str = "normal"
-    seed: Optional[int] = None
-    interval_seconds: float = DEFAULT_INTERVAL_SECONDS
-    step: int = 0
-    samples_generated: int = 0
-    started_at: Optional[datetime] = None
-    last_sample_at: Optional[datetime] = None
-    last_fault_sensor: Optional[str] = None
-    recent_samples: List[Dict[str, Any]] = field(default_factory=list)
-    # asyncio.Task handle is attached by the API layer; kept untyped here so
-    # the service stays importable without an event loop.
-    task: Any = None
+def _utc(value: Optional[datetime]) -> Optional[datetime]:
+    if value is None:
+        return None
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
 
-state = SimulationState()
+def rng_for(seed: Optional[int], step: int) -> random.Random:
+    """Deterministic per-step RNG: same (seed, step) => same values anywhere."""
+    if seed is None:
+        return random.Random()
+    return random.Random(f"{seed}:{step}")
 
 
-def reset_state() -> None:
-    """Stop and clear the current simulation session (used by tests)."""
-    state.running = False
-    state.station_code = None
-    state.source_code = None
-    state.scenario = "normal"
-    state.seed = None
-    state.interval_seconds = DEFAULT_INTERVAL_SECONDS
-    state.step = 0
-    state.samples_generated = 0
-    state.started_at = None
-    state.last_sample_at = None
-    state.last_fault_sensor = None
-    state.recent_samples = []
-    state.task = None
+# ---------------------------------------------------------------------------
+# Persistent run state
+# ---------------------------------------------------------------------------
 
+def get_run(db: Session) -> SimulationRun:
+    """Return the singleton run row, creating it on first use."""
+    run = db.get(SimulationRun, RUN_ID)
+    if run is None:
+        run = SimulationRun(
+            id=RUN_ID,
+            status="paused",
+            scenario="normal",
+            interval_seconds=DEFAULT_INTERVAL_SECONDS,
+            step=0,
+            samples_generated=0,
+        )
+        db.add(run)
+        try:
+            db.commit()
+        except Exception:  # concurrent first-use insert; re-read
+            db.rollback()
+            run = db.get(SimulationRun, RUN_ID)
+            if run is None:
+                raise
+    return run
+
+
+def start(
+    db: Session,
+    station_code: str,
+    scenario: str = "normal",
+    seed: Optional[int] = None,
+    interval_seconds: float = DEFAULT_INTERVAL_SECONDS,
+    worker_id: str = WORKER_ID,
+) -> SimulationRun:
+    """Configure (or reconfigure) the run and mark it running.
+
+    Counters restart so a seeded run is reproducible; any previous lease is
+    replaced by the caller's, so exactly one worker will drive generation.
+    """
+    if scenario not in SCENARIOS:
+        raise ValueError(f"Unknown simulation scenario: {scenario!r}")
+    if interval_seconds <= 0:
+        raise ValueError("interval_seconds must be > 0")
+
+    station = (
+        db.query(MonitoringStation)
+        .filter(MonitoringStation.station_code == station_code)
+        .first()
+    )
+    if station is None:
+        raise ValueError(f"Unknown station_code: {station_code!r}")
+
+    now = datetime.now(timezone.utc)
+    run = get_run(db)
+    run.station_code = station_code
+    run.source_code = (
+        station.water_source.source_code if station.water_source is not None else None
+    )
+    run.scenario = scenario
+    run.seed = seed
+    run.interval_seconds = float(interval_seconds)
+    run.status = "running"
+    run.step = 0
+    run.samples_generated = 0
+    run.started_at = now
+    run.last_sample_at = None
+    run.worker_id = worker_id
+    run.lease_expires_at = now + timedelta(seconds=LEASE_SECONDS)
+    db.commit()
+    db.refresh(run)
+    return run
+
+
+def pause(db: Session, worker_id: Optional[str] = None) -> SimulationRun:
+    """Stop generation and release the lease."""
+    run = get_run(db)
+    run.status = "paused"
+    run.worker_id = None
+    run.lease_expires_at = None
+    db.commit()
+    db.refresh(run)
+    return run
+
+
+def claim_lease(db: Session, worker_id: str, now: Optional[datetime] = None) -> bool:
+    """Atomically claim/renew the generation lease for this worker.
+
+    Returns True when the caller owns the lease (status must be running and the
+    previous lease must be absent, expired, or already ours). This is the
+    duplicate-loop guard: while one worker holds a valid lease, no other worker
+    can generate.
+    """
+    now = now or datetime.now(timezone.utc)
+    run = get_run(db)
+    if run.status != "running":
+        return False
+
+    lease_until = _utc(run.lease_expires_at)
+    owned = run.worker_id == worker_id
+    free = run.worker_id is None or lease_until is None or lease_until <= now
+    if not (owned or free):
+        return False
+
+    run.worker_id = worker_id
+    run.lease_expires_at = now + timedelta(seconds=LEASE_SECONDS)
+    db.commit()
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Sample generation
+# ---------------------------------------------------------------------------
 
 def _next_values(
     rng: random.Random,
     baseline: Dict[str, float],
     scenario: str,
     step: int,
-    last_fault: Optional[str],
 ) -> Tuple[Dict[str, Optional[float]], Optional[str]]:
     """Compute the four sensor values for one simulation step."""
 
@@ -143,10 +232,6 @@ def _next_values(
             index += 28.0 + rng.uniform(0.0, 8.0)
             tds += 180.0 + rng.uniform(0.0, 40.0)
             ph -= 0.5
-    elif scenario == "sensor_fault":
-        # The fault alternates which sensor dropped out; a missing sensor is
-        # stored as NULL — never zero, never an invented value.
-        pass
 
     values: Dict[str, Optional[float]] = {
         "ph": round(_clamp(ph, 4.0, 10.5), 2),
@@ -156,9 +241,9 @@ def _next_values(
     }
 
     if scenario == "sensor_fault":
-        # Rotate the failing sensor so repeated generation shows different faults.
-        position = (step // 3) % len(FAULT_SENSORS)
-        faulted = FAULT_SENSORS[position]
+        # Rotate which sensor dropped out; a missing sensor is stored as NULL —
+        # never zero, never an invented value.
+        faulted = FAULT_SENSORS[(step // 3) % len(FAULT_SENSORS)]
         values[faulted] = None
         return values, faulted
 
@@ -170,13 +255,18 @@ def generate_sample(
     station_code: str,
     scenario: str = "normal",
     seed: Optional[int] = None,
-    advance_state: bool = True,
+    step: Optional[int] = None,
+    update_run: bool = True,
 ) -> SensorReading:
     """Generate and persist ONE simulated reading for a station.
 
     The reading is stored with ``source = "simulator"`` and the relative
-    turbidity index unit, then the standard suitability assessments are
-    derived from it — the same derived-data path hardware telemetry uses.
+    turbidity index unit; the standard suitability assessments are then derived
+    from it — the same path hardware telemetry uses.
+
+    ``step`` decides the per-step RNG and the sensor-fault rotation. When
+    ``update_run`` is true the persistent run counters advance, which is how an
+    API worker's generation loop makes progress.
     """
 
     if scenario not in SCENARIOS:
@@ -190,19 +280,25 @@ def generate_sample(
     if station is None:
         raise ValueError(f"Unknown station_code: {station_code!r}")
 
+    run = get_run(db)
+    if step is None:
+        step = run.step if update_run else 0
+
+    if update_run:
+        # "Generate Sample" and the generation loop both advance the single
+        # persistent run, keeping counters and config aligned with what was
+        # actually generated. A manual generation never starts the timed run.
+        run.station_code = station_code
+        run.scenario = scenario
+        run.seed = seed
+
     source_code = (
         station.water_source.source_code if station.water_source is not None else None
     )
     baseline = RIVER_BASELINES.get(source_code or "", DEFAULT_BASELINE)
 
-    if advance_state and state.station_code == station_code:
-        step = state.step
-        rng = state_rng(seed)
-    else:
-        step = 0
-        rng = random.Random(seed)
-
-    values, faulted = _next_values(rng, baseline, scenario, step, state.last_fault_sensor)
+    rng = rng_for(seed, step)
+    values, faulted = _next_values(rng, baseline, scenario, step)
 
     now = datetime.now(timezone.utc)
     reading = SensorReading(
@@ -243,90 +339,76 @@ def generate_sample(
     except Exception:  # noqa: BLE001 - a derived-data failure keeps the sample
         db.rollback()
 
-    if advance_state:
-        state.station_code = station_code
-        state.source_code = source_code
-        state.scenario = scenario
-        state.seed = seed
-        state.step = step + 1
-        state.samples_generated += 1
-        state.last_sample_at = now
-        if faulted:
-            state.last_fault_sensor = faulted
+    if update_run:
+        run = get_run(db)
+        run.step = step + 1
+        run.samples_generated = (run.samples_generated or 0) + 1
+        run.last_sample_at = now
+        run.source_code = source_code
+        db.commit()
 
-    summary = {
-        "id": reading.id,
-        "station_code": station_code,
-        "source_code": source_code,
-        "timestamp": now.isoformat(),
-        "scenario": scenario,
-        "step": step,
-        "ph": values["ph"],
-        "tds": values["tds"],
-        "temperature": values["temperature"],
-        "turbidity_index": values["turbidity_index"],
-        "turbidity_status": reading.turbidity_status,
-        "fault_sensor": faulted,
-        "source": "simulator",
-        "simulated": True,
-    }
-    if advance_state:
-        state.recent_samples.append(summary)
-        state.recent_samples = state.recent_samples[-MAX_KEPT_SAMPLES:]
     return reading
 
 
-def state_rng(seed: Optional[int]) -> random.Random:
-    """A stable RNG for an in-progress run (seeded once, then advanced)."""
-
-    if not hasattr(state, "_rng") or state._rng is None:  # type: ignore[attr-defined]
-        state._rng = random.Random(seed)  # type: ignore[attr-defined]
-    return state._rng  # type: ignore[attr-defined]
-
-
-def start(
-    station_code: str,
-    scenario: str = "normal",
-    seed: Optional[int] = None,
-    interval_seconds: float = DEFAULT_INTERVAL_SECONDS,
-) -> SimulationState:
-    """Configure (or reconfigure) the simulation run. Does not generate yet."""
-    if scenario not in SCENARIOS:
-        raise ValueError(f"Unknown simulation scenario: {scenario!r}")
-    if interval_seconds <= 0:
-        raise ValueError("interval_seconds must be > 0")
-
-    state.running = True
-    state.station_code = station_code
-    state.scenario = scenario
-    state.seed = seed
-    state.interval_seconds = interval_seconds
-    state.step = 0
-    state.started_at = datetime.now(timezone.utc)
-    state._rng = random.Random(seed)  # type: ignore[attr-defined]
-    return state
-
-
-def pause() -> SimulationState:
-    state.running = False
-    state.task = None
-    return state
+def recent_samples(db: Session, limit: int = MAX_KEPT_SAMPLES) -> List[Dict[str, Any]]:
+    """Most recent simulated readings (newest first) for the state payload."""
+    rows = (
+        db.query(SensorReading)
+        .filter(SensorReading.source == "simulator")
+        .order_by(SensorReading.timestamp.desc(), SensorReading.id.desc())
+        .limit(limit)
+        .all()
+    )
+    samples: List[Dict[str, Any]] = []
+    for reading in rows:
+        diagnostics = reading.diagnostics if isinstance(reading.diagnostics, dict) else {}
+        simulation = diagnostics.get("simulation") if isinstance(diagnostics.get("simulation"), dict) else {}
+        station = reading.station
+        samples.append({
+            "id": reading.id,
+            "station_code": station.station_code if station else None,
+            "source_code": station.water_source.source_code if station and station.water_source else None,
+            "timestamp": reading.timestamp.isoformat() if reading.timestamp else None,
+            "scenario": simulation.get("scenario"),
+            "step": simulation.get("step", 0),
+            "ph": reading.ph,
+            "tds": reading.tds,
+            "temperature": reading.temperature,
+            "turbidity_index": reading.turbidity_index,
+            "turbidity_status": reading.turbidity_status,
+            "fault_sensor": simulation.get("fault_sensor"),
+            "source": reading.source,
+            "simulated": True,
+        })
+    return samples
 
 
-def state_payload() -> Dict[str, Any]:
+def state_payload(db: Session) -> Dict[str, Any]:
+    """Current simulation state straight from the database."""
+    run = get_run(db)
+    now = datetime.now(timezone.utc)
+    lease_until = _utc(run.lease_expires_at)
+    lease_active = bool(
+        run.status == "running"
+        and run.worker_id
+        and lease_until
+        and lease_until > now
+    )
     return {
-        "running": state.running,
-        "station_code": state.station_code,
-        "source_code": state.source_code,
-        "scenario": state.scenario,
-        "seed": state.seed,
-        "interval_seconds": state.interval_seconds,
-        "step": state.step,
-        "samples_generated": state.samples_generated,
-        "started_at": state.started_at.isoformat() if state.started_at else None,
-        "last_sample_at": state.last_sample_at.isoformat() if state.last_sample_at else None,
+        "running": run.status == "running",
+        "station_code": run.station_code,
+        "source_code": run.source_code,
+        "scenario": run.scenario,
+        "seed": run.seed,
+        "interval_seconds": run.interval_seconds,
+        "step": run.step,
+        "samples_generated": run.samples_generated,
+        "started_at": run.started_at.isoformat() if run.started_at else None,
+        "last_sample_at": run.last_sample_at.isoformat() if run.last_sample_at else None,
         "simulated": True,
         "label": "SIMULATED DATA — NOT LIVE SENSOR DATA",
         "scenarios": list(SCENARIOS),
-        "recent_samples": list(reversed(state.recent_samples)),
+        "persistent": True,
+        "worker_holding_lease": lease_active,
+        "recent_samples": recent_samples(db),
     }

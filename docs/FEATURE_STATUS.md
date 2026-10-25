@@ -18,11 +18,18 @@
 
 | Status | Scope | Examples |
 |---|---|---|
-| **Verified** | backend contracts, public QR page, auth, suitability, ML serving, evaluation transparency | MQTT handler, RBAC, ingestion-time assessment, `/public/*`, `/authority/ml/status` |
+| **Verified** | backend contracts, public QR page, auth, suitability, ML serving, evaluation transparency, product alerts + threshold profile, forecast readiness gates | MQTT handler, RBAC, ingestion-time assessment, `/public/*`, `/authority/ml/status`, `alerting.py`, `forecasting.py` |
 | **Implemented (manual check)** | 3 | ESP32 firmware, simulator scenarios, QR scanned from a phone over LAN |
 | **Partial** | 5 screens | command center, live monitoring board, station detail, analytics, water map |
-| **UI-only** | 12 screens | alerts, incidents, inspections, laboratory, water sources, nearby sources, warnings, public water check, my checks, user check-water, user history, device activation |
-| **Not implemented** | 6 backends | alert engine/notifications, incident workflow, inspection workflow, lab-record store, personal-device reading submission, device activation API (the map canvas is a placeholder, not a backend) |
+| **UI-only** | 9 screens | authority alerts/incidents/inspections/laboratory, water sources, nearby sources, warnings, public water check, public saved checks |
+| **Not implemented** | 4 backends | incident workflow, inspection workflow, lab-record store, GIS map backend (the map canvas is a placeholder, not a backend) |
+
+> **Resolved since this audit** (see README *Scientific Honesty & Limitations* →
+> *Resolved in this pass*): product alerts + versioned threshold profile,
+> `POST /product/activate`, the product-user check-water/history flow (now
+> API-backed), persistent multi-worker simulation state, per-reading ML
+> availability messages, and the validated baseline forecast endpoint. The
+> security findings in §6 remain open.
 
 ---
 
@@ -51,10 +58,13 @@
 | Suitability computed at ingestion | `mqtt_service.py` lines ~313-328 | code read; covered indirectly by `test_telemetry` | **Verified (code)** |
 | Public suitability endpoint | `GET /public/stations/{code}/suitability` | `test_water_suitability` public cases | **Verified** |
 | Password hashing (argon2 via `pwdlib`) | `core/security.py` | login tests | **Verified** |
-| Alert generation / notification | — | no model, no route, no service | **Not implemented** |
+| Alert generation / notification | `app/services/alerting.py`, `alert_thresholds.py`, `GET /product/alerts`, `/product/alerts/profile` | `tests/test_simulation_and_alerts.py` (danger levels, index-vs-NTU, profile classification) | **Verified** |
 | Incident / inspection / lab-record APIs | — | no model, no route | **Not implemented** |
-| Product-user reading submission (personal device → API) | — | only `GET /product/*` exists | **Not implemented** |
-| Device activation endpoint (`POST /product/activate`) | — | activation only happens as a side effect of registration with `product_code` | **Not implemented** |
+| Persistent simulation controls | `app/services/simulation_service.py`, `simulation_runs` (migration `c1d2e3f4a5b6`), `POST /simulation/start|pause|generate` | `tests/test_simulation_and_alerts.py` (restart-safe singleton, lease, seeded reproducibility) | **Verified** |
+| Baseline forecasting with readiness + evaluation gates | `app/services/forecasting.py`, `GET /authority/stations/{code}/forecast` | `tests/test_forecasting.py` (11 tests: insufficient data, holdout gate, horizon bounds, auth) | **Verified** |
+| Per-reading ML availability (index exclusion message) | `app/services/ml_availability.py`, analysis endpoints | `tests/test_ml_availability.py` | **Verified** |
+| Product-user reading submission (`POST /product/tests`, live window) | `app/api/v1/product.py`, `product_test_service.py` | `tests/test_product_tests.py` (stability, calibration, strict TDS rule) | **Verified** |
+| Device activation endpoint (`POST /product/activate`) | `app/api/v1/product.py` | `tests/test_product_tests.py::test_activate_unowned_product_code` + cases | **Verified** |
 | Rate limiting / account lockout | — | absent | **Not implemented** |
 
 ---
@@ -68,14 +78,14 @@
 | Login / Register | `/user/login`, `/user/register` | **Yes** — `authApi` | Token in `localStorage` via `lib/auth.ts` | **Verified** |
 | Product dashboard | `/user/dashboard` | **Yes** — `productApi.getProfile` | Device tiles come from `/product/devices` on the devices page | **Verified** |
 | Product devices | `/user/devices` | **Yes** — `productApi.getDevices` | Shows bound device + status | **Verified** |
-| Device activation page | `/user/activate` | **No** | Form accepts any code and navigates to the dashboard; no API call. Binding actually happens in `/auth/register` | **UI-only** |
-| Personal water check | `/user/check-water` | **No** | 3-second `setTimeout`, then a hard-coded result screen | **UI-only** |
-| Personal check history | `/user/history` | **No** | `HISTORY` array of 5 rows | **UI-only** |
+| Device activation page | `/user/activate` | **Yes** — `productApi.activateProduct` → `POST /product/activate` with real error handling | Backend rejects unowned/invalid codes (tested) | **Verified** |
+| Personal water check | `/user/check-water` | **Yes** — `productApi.startTest` → `POST /product/tests` (stable live window or labelled demo) | Result screen reads the saved assessment from the API | **Verified** (frontend + backend tests) |
+| Personal check history | `/user/history` | **Yes** — `productApi.getTests` → `GET /product/tests` | Private, server-side per-user history | **Verified** |
 | Authority command center | `/authority` | **Partial** | Station list (`authorityApi.getAllStations`) and `MlSummaryCard` are real. KPI cards, water-source cards, alert panel, trend chart, prediction card and `SensorHealth` use `mockData` | **Partial** |
 | Live IoT monitoring | `/authority/monitoring` | **Partial** | Backend station selector, `TelemetryStatusCard`, `MlIndicator`, `PublicPageQrCard`, `WaterSuitabilitySection` are real. The upper probe/source board is `mockData` | **Partial** |
 | Station detail | `/authority/stations/:stationId` | **Partial (broken join)** | Page is keyed by mock ids (`source-tg-halli`), so `MlLatestCard` calls the real API with a mock id and gets 404 → "unavailable". Telemetry cards are not present here; `LiveMonitoring` is the real station view | **Partial** |
 | Water map | `/authority/map` | **Yes (data)** / placeholder (visual) | Fetches real stations; the map canvas is a styled placeholder ("Interactive GIS Placeholder — Mapbox Ready") | **Partial** |
-| Analytics | `/authority/analytics` | **Partial** | Source selector is `mockData`; `ModelHealthCard` is real; SHAP section is an explicit placeholder | **Partial** |
+| Analytics | `/authority/analytics` | **Partial** | Source selector and trend chart are `mockData`; `ModelHealthCard` is real; `PredictionCard` is now a real forecast card (reads `GET /authority/stations/{code}/forecast`); the old fabricated SHAP grid was replaced by an honest evaluation explainer | **Partial** |
 | Alerts / Incidents / Inspections / Laboratory | `/authority/*` | **No** | `mockAlerts`, `mockIncidents`, `mockInspections`, `mockLabRecords`; acknowledge/reset is local state only | **UI-only** |
 | Water sources list | `/authority/sources` | **No** | `mockWaterSources` | **UI-only** |
 | Nearby sources / Warnings | `/public/sources`, `/public/warnings` | **No** | `mockWaterSources` | **UI-only** |
@@ -98,6 +108,8 @@
 | Live inference feature contract | 4 features, named DataFrame, fixed order | **Verified** (`ml_service.py` + tests) |
 | Model retraining in production | — | **Not implemented / by design** |
 | Drift detection, monitoring, scheduled retraining | — | **Not implemented** |
+| Turbidity-index model (0–100 inputs) | no labelled dataset exists; index readings deliberately report “ML prediction unavailable for Turbidity Index readings.” | **Limitation (documented)** — requirements + workflow in `docs/TURBIDITY_INDEX_ML.md` |
+| Baseline forecasting (Ridge vs persistence, holdout-gated) | `app/services/forecasting.py`; points only when holdout MAE beats persistence | **Verified** (`tests/test_forecasting.py`) — no probabilistic model claimed |
 
 ---
 
@@ -144,7 +156,9 @@ slide rather than being discovered by an examiner.
   data, and can never call drinking water 'safe' without lab tests."
 - **Public access:** "Every station has a QR-linked public page that shows real readings and the
   six-use suitability assessment."
-- **Product user:** "Accounts, device binding and the device list are real; the personal water-check
-  flow is still a UI prototype."
-- **Authority dashboard:** "Telemetry, ML analysis, model health and suitability panels are live;
-  the operational workflow screens (alerts, incidents, inspections, lab) are prototypes."
+- **Product user:** "Accounts, device binding, activation, the live water-check
+  flow and the private test history are all API-backed and tested; alerts come
+  from the real threshold profile."
+- **Authority dashboard:** "Telemetry, ML analysis, model health, suitability,
+  alerts and the gated forecast are live; the operational workflow screens
+  (incidents, inspections, lab) are still prototypes."

@@ -1,9 +1,15 @@
 """Simulation controls for the three demonstration rivers.
 
-Start / pause / generate-sample endpoints that drive
-``app.services.simulation_service``. Generated rows land in
-``sensor_readings`` with ``source = "simulator"`` and are labelled
-SIMULATED DATA — NOT LIVE SENSOR DATA everywhere they appear.
+Start / pause / generate-sample endpoints backed by the ``simulation_runs``
+singleton row, so the controls are consistent across API workers and frontend
+sessions and survive application restarts.
+
+A per-process poller (started from the app lifespan) drives generation while
+the run is ``running``. Only the worker that holds the unexpired generation
+lease produces samples, so multiple workers never run duplicate loops.
+
+Every generated row lands in ``sensor_readings`` with ``source = "simulator"``
+and the label SIMULATED DATA — NOT LIVE SENSOR DATA.
 
 Authority-only: simulation is a demonstration control, not a public action.
 """
@@ -12,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -30,71 +37,93 @@ logger = logging.getLogger("hydrasense.simulation")
 
 router = APIRouter(prefix="/simulation", tags=["Simulation"])
 
-_task: asyncio.Task | None = None
+POLL_TICK_SECONDS = 0.5
+_poller_task: asyncio.Task | None = None
 
 
-async def _generation_loop(station_code: str, scenario: str, seed: int | None) -> None:
-    """Generate one simulated sample per interval while the run is active."""
-    while simulation_service.state.running:
-        try:
-            await asyncio.to_thread(_generate_one, station_code, scenario, seed)
-        except Exception as err:  # noqa: BLE001 - keep the run alive
-            logger.error("Simulation sample failed: %s", err, exc_info=True)
-        await asyncio.sleep(simulation_service.state.interval_seconds)
+def _generation_tick(worker_id: str) -> None:
+    """Claim the lease; generate one sample when the interval has elapsed."""
 
-
-def _generate_one(station_code: str, scenario: str, seed: int | None) -> None:
     db = SessionLocal()
     try:
-        # Per-step seed keeps a seeded run reproducible across samples.
-        step_seed = None if seed is None else seed + simulation_service.state.step
+        if not simulation_service.claim_lease(db, worker_id):
+            return  # another worker holds the lease, or the run is paused
+        run = simulation_service.get_run(db)
+        if run.status != "running" or not run.station_code:
+            return
+
+        now = datetime.now(timezone.utc)
+        last = run.last_sample_at
+        if last is not None:
+            if last.tzinfo is None:
+                last = last.replace(tzinfo=timezone.utc)
+            if (now - last).total_seconds() < (run.interval_seconds or 0):
+                return
+
         simulation_service.generate_sample(
             db,
-            station_code=station_code,
-            scenario=scenario,
-            seed=step_seed,
+            station_code=run.station_code,
+            scenario=run.scenario,
+            seed=run.seed,
+            step=run.step,
+            update_run=True,
         )
+        # Renew after the (possibly slow) generation so a slow sample does not
+        # let a second worker start generating concurrently.
+        simulation_service.claim_lease(db, worker_id)
+    except Exception as err:  # noqa: BLE001 - a tick failure must not kill the loop
+        logger.error("Simulation tick failed: %s", err, exc_info=True)
+        db.rollback()
     finally:
         db.close()
 
 
-def _stop_task() -> None:
-    global _task
-    if _task is not None and not _task.done():
-        _task.cancel()
-    _task = None
+async def _poll_loop(worker_id: str) -> None:
+    while True:
+        await asyncio.sleep(POLL_TICK_SECONDS)
+        await asyncio.to_thread(_generation_tick, worker_id)
 
+
+def start_simulation_poller() -> None:
+    """Start this worker's generation loop (idempotent)."""
+    global _poller_task
+    if _poller_task is None or _poller_task.done():
+        _poller_task = asyncio.get_running_loop().create_task(
+            _poll_loop(simulation_service.WORKER_ID)
+        )
+        logger.info("Simulation poller started (worker=%s)", simulation_service.WORKER_ID)
+
+
+def stop_simulation_poller() -> None:
+    global _poller_task
+    if _poller_task is not None and not _poller_task.done():
+        _poller_task.cancel()
+    _poller_task = None
+
+
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
 
 @router.get("/state", response_model=SimulationStateResponse)
 def get_simulation_state(
     current_user: User = Depends(get_current_authority),
+    db: Session = Depends(get_db),
 ):
-    return simulation_service.state_payload()
+    return simulation_service.state_payload(db)
 
 
 @router.post("/start", response_model=SimulationStateResponse)
-async def start_simulation(
+def start_simulation(
     payload: SimulationStartRequest,
     current_user: User = Depends(get_current_authority),
     db: Session = Depends(get_db),
 ):
-    """Start (or restart) a simulation run for one station."""
-
-    from app.models.water import MonitoringStation
-
-    station = (
-        db.query(MonitoringStation)
-        .filter(MonitoringStation.station_code == payload.station_code)
-        .first()
-    )
-    if station is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Unknown station_code: {payload.station_code}",
-        )
+    """Start (or restart) the persistent simulation run for one station."""
 
     try:
         simulation_service.start(
+            db,
             station_code=payload.station_code,
             scenario=payload.scenario,
             seed=payload.seed,
@@ -103,27 +132,21 @@ async def start_simulation(
     except ValueError as err:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(err))
 
-    _stop_task()
-    global _task
-    _task = asyncio.create_task(
-        _generation_loop(payload.station_code, payload.scenario, payload.seed)
-    )
-    simulation_service.state.task = _task
     logger.info(
         "Simulation started: station=%s scenario=%s seed=%s interval=%ss",
         payload.station_code, payload.scenario, payload.seed, payload.interval_seconds,
     )
-    return simulation_service.state_payload()
+    return simulation_service.state_payload(db)
 
 
 @router.post("/pause", response_model=SimulationStateResponse)
-async def pause_simulation(
+def pause_simulation(
     current_user: User = Depends(get_current_authority),
+    db: Session = Depends(get_db),
 ):
-    _stop_task()
-    simulation_service.pause()
+    simulation_service.pause(db)
     logger.info("Simulation paused")
-    return simulation_service.state_payload()
+    return simulation_service.state_payload(db)
 
 
 @router.post("/generate", response_model=SimulationStateResponse)
@@ -132,9 +155,9 @@ def generate_samples(
     current_user: User = Depends(get_current_authority),
     db: Session = Depends(get_db),
 ):
-    """Generate sample(s) immediately without starting a timed run."""
+    """Generate sample(s) immediately without starting the timed run."""
 
-    station_code = payload.station_code or simulation_service.state.station_code
+    station_code = payload.station_code or simulation_service.get_run(db).station_code
     if not station_code:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -142,17 +165,15 @@ def generate_samples(
         )
 
     try:
-        for index in range(payload.count):
-            seed = None if payload.seed is None else payload.seed + index
+        for _ in range(payload.count):
             simulation_service.generate_sample(
                 db,
                 station_code=station_code,
                 scenario=payload.scenario,
-                seed=seed,
+                seed=payload.seed,
+                update_run=True,
             )
     except ValueError as err:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(err))
 
-    simulation_service.state.station_code = station_code
-    simulation_service.state.scenario = payload.scenario
-    return simulation_service.state_payload()
+    return simulation_service.state_payload(db)

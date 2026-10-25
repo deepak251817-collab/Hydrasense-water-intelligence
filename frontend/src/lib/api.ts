@@ -984,6 +984,65 @@ export const simulationApi = {
   ) => apiPostAuth<SimulationState>("/simulation/generate", data, token),
 };
 
+// ---------------------------------------------------------------------------
+// Baseline forecasting (authority-only, honest availability)
+// ---------------------------------------------------------------------------
+
+export interface ForecastPoint {
+  timestamp: string;
+  value: number;
+  lower: number;
+  upper: number;
+}
+
+export interface ForecastModelInfo {
+  name: string;
+  evaluation: string;
+  train_size: number;
+  test_size: number;
+  mae: number;
+  rmse: number;
+  baseline_mae: number;
+  baseline_rmse: number;
+}
+
+export interface ForecastParameter {
+  parameter: string;
+  label: string;
+  unit: string;
+  status: "ready" | "unavailable";
+  reason: string | null;
+  message: string | null;
+  last_observed: number | null;
+  last_observed_at: string | null;
+  model: ForecastModelInfo | null;
+  uncertainty: { method: string; width: number; note: string } | null;
+  points: ForecastPoint[];
+}
+
+export interface ForecastResponse {
+  station_code: string;
+  generated_at: string;
+  horizon_hours: number;
+  status: "ready" | "unavailable";
+  unavailable_reason: string | null;
+  message: string;
+  data_sources: Record<string, number>;
+  trained_on_simulated: boolean;
+  readiness: {
+    min_samples_required: number;
+    min_span_days_required: number;
+    observed_span_days: number;
+    parameters: {
+      parameter: string;
+      valid_samples: number;
+      span_days: number;
+      sufficient: boolean;
+    }[];
+  };
+  parameters: ForecastParameter[];
+}
+
 // Authority API (requires AUTHORITY JWT)
 export const authorityApi = {
   getProfile: (token: string) =>
@@ -1045,6 +1104,17 @@ export const authorityApi = {
       token
     );
   },
+
+  /**
+   * Honest baseline forecast (authority-only). Returns forecast points only for
+   * parameters whose model beat a persistence baseline on a chronological
+   * holdout; otherwise `status = "unavailable"` with an explicit reason.
+   */
+  getForecast: (stationCode: string, token: string, horizonHours = 24) =>
+    apiGetAuth<ForecastResponse>(
+      `/authority/stations/${stationCode}/forecast?horizon_hours=${horizonHours}`,
+      token
+    ),
 };
 
 /**
