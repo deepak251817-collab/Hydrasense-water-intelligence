@@ -1,6 +1,9 @@
 from datetime import datetime
 from typing import List, Optional
-from sqlalchemy import String, Text, Float, Boolean, DateTime, ForeignKey, Integer, JSON, func
+from sqlalchemy import (
+    String, Text, Float, Boolean, DateTime, ForeignKey, Integer, JSON,
+    UniqueConstraint, func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.database import Base
 
@@ -79,6 +82,14 @@ class SensorReading(Base):
     # unit is NULL or relative_index_0_100 must not be read as NTU.
     turbidity_unit: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
 
+    # DEDICATED analog-sensor field: the relative turbidity index on a
+    # documented 0-100 scale, higher = cloudier (clearer water reads lower).
+    # Populated ONLY for rows whose unit is relative_index_0_100. It is a
+    # different quantity from NTU: never labelled NTU, never compared with
+    # an NTU limit, and never converted into NTU. NULL for NTU rows and for
+    # rows with an unknown unit.
+    turbidity_index: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
     # Firmware-reported relative status band (CLEARER / MODERATE / CLOUDIER)
     # for relative-index rows; NULL when not reported or not applicable.
     turbidity_status: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
@@ -108,4 +119,57 @@ class SensorReading(Base):
     )
 
     station: Mapped["MonitoringStation"] = relationship("MonitoringStation", back_populates="readings")
+
+
+class WaterSuitabilityAssessment(Base):
+    """Standards-based suitability assessment of ONE reading for ONE intended use.
+
+    Derived data only: the original reading is never modified. One row per
+    (reading, use, ruleset version), so recalculating is idempotent and the
+    history accumulates as new readings arrive.
+
+    `parameters` stores the per-criterion outcome (value, limit, status, note),
+    `missing_parameters` the tests still required, and `data_quality` the
+    freshness/provenance that justified the comparison.
+    """
+
+    __tablename__ = "water_suitability_assessments"
+    __table_args__ = (
+        UniqueConstraint(
+            "reading_id", "use_code", "standard_version",
+            name="uq_suitability_reading_use_version",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True, autoincrement=True)
+    station_id: Mapped[int] = mapped_column(
+        ForeignKey("monitoring_stations.id"), nullable=False, index=True
+    )
+    reading_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("sensor_readings.id"), nullable=True, index=True
+    )
+
+    use_code: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    standard_code: Mapped[str] = mapped_column(String(60), nullable=False)
+    standard_version: Mapped[str] = mapped_column(String(20), nullable=False)
+
+    result_code: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    result_label: Mapped[str] = mapped_column(String(255), nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+
+    parameters: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    missing_parameters: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    measured_values: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    data_quality: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    limitations: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+
+    reading_timestamp: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    assessed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
 

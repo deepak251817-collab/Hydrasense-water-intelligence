@@ -48,26 +48,51 @@ def seed_demo_data():
         else:
             print(f"  [*] Product Device already exists: {product_code}")
 
-        # 3. Seed Water Source (Arkavathi River)
-        source_code = "ARKAVATHI"
-        existing_source = db.query(WaterSource).filter(WaterSource.source_code == source_code).first()
-        if not existing_source:
-            water_source = WaterSource(
-                source_code=source_code,
-                name="Arkavathi River",
-                source_type="RIVER",
-                description="Major tributary of the Kaveri river basin in Karnataka providing water security monitoring.",
+        # 3. Seed Water Sources — the three demonstration rivers only.
+        # Locations and readings for these rivers are DEMONSTRATION data.
+        sources_data = [
+            {
+                "source_code": "ARKAVATHI",
+                "name": "Arkavathi River",
+                "description": "Tributary of the Cauvery basin in Karnataka. Demonstration river for this project.",
+            },
+            {
+                "source_code": "CAUVERY",
+                "name": "Cauvery River",
+                "description": "Major south-Indian river crossing Karnataka and Tamil Nadu. Demonstration river for this project.",
+            },
+            {
+                "source_code": "VRISHABHAVATHI",
+                "name": "Vrishabhavathi River",
+                "description": "Bengaluru's south-flowing urban river. Demonstration river for this project.",
+            },
+        ]
+        sources_by_code = {}
+        for src in sources_data:
+            existing_source = (
+                db.query(WaterSource)
+                .filter(WaterSource.source_code == src["source_code"])
+                .first()
             )
-            db.add(water_source)
-            db.flush()
-            print(f"  [+] Created Water Source: Arkavathi River ({source_code})")
-        else:
-            water_source = existing_source
-            print(f"  [*] Water Source already exists: {source_code}")
+            if not existing_source:
+                water_source = WaterSource(
+                    source_code=src["source_code"],
+                    name=src["name"],
+                    source_type="RIVER",
+                    description=src["description"],
+                )
+                db.add(water_source)
+                db.flush()
+                print(f"  [+] Created Water Source: {src['name']} ({src['source_code']})")
+            else:
+                water_source = existing_source
+                print(f"  [*] Water Source already exists: {src['source_code']}")
+            sources_by_code[src["source_code"]] = water_source
 
-        # 4. Seed Monitoring Stations
+        # 4. Seed Monitoring Stations — each river may have its own locations.
         stations_data = [
             {
+                "source_code": "ARKAVATHI",
                 "station_code": "ARK-001",
                 "station_name": "Arkavathi Upstream Station",
                 "zone": "Upstream Catchment Zone",
@@ -79,6 +104,7 @@ def seed_demo_data():
                 "is_active": True,
             },
             {
+                "source_code": "ARKAVATHI",
                 "station_code": "ARK-002",
                 "station_name": "Arkavathi Midstream Station",
                 "zone": "Midstream Urban Transition Zone",
@@ -90,6 +116,7 @@ def seed_demo_data():
                 "is_active": True,
             },
             {
+                "source_code": "ARKAVATHI",
                 "station_code": "ARK-003",
                 "station_name": "Arkavathi Downstream Station",
                 "zone": "Downstream Basin Zone",
@@ -100,14 +127,51 @@ def seed_demo_data():
                 "public_message": "Safe baseline for environmental and agricultural water monitoring.",
                 "is_active": True,
             },
+            {
+                "source_code": "CAUVERY",
+                "station_code": "CAU-001",
+                "station_name": "Cauvery Riverside Station",
+                "zone": "Riverside Monitoring Zone",
+                "location": "Ramnagara Stretch",
+                "latitude": 12.7170,
+                "longitude": 77.2830,
+                "public_warning": "NORMAL",
+                "public_message": "Demonstration monitoring point on the Cauvery. Simulated readings unless hardware is connected.",
+                "is_active": True,
+            },
+            {
+                "source_code": "VRISHABHAVATHI",
+                "station_code": "VRS-001",
+                "station_name": "Vrishabhavathi Upstream Station",
+                "zone": "Urban Headwater Zone",
+                "location": "Vrishabhavathi Source Region",
+                "latitude": 13.0330,
+                "longitude": 77.5530,
+                "public_warning": "CAUTION",
+                "public_message": "Demonstration monitoring point. Simulated readings unless hardware is connected.",
+                "is_active": True,
+            },
+            {
+                "source_code": "VRISHABHAVATHI",
+                "station_code": "VRS-002",
+                "station_name": "Vrishabhavathi Downstream Station",
+                "zone": "Downstream Urban Zone",
+                "location": "Vrishabhavathi Confluence Checkpoint",
+                "latitude": 12.9530,
+                "longitude": 77.5410,
+                "public_warning": "CAUTION",
+                "public_message": "Demonstration monitoring point. Simulated readings unless hardware is connected.",
+                "is_active": True,
+            },
         ]
 
         for s_data in stations_data:
+            river_source = sources_by_code[s_data["source_code"]]
             existing_station = db.query(MonitoringStation).filter(MonitoringStation.station_code == s_data["station_code"]).first()
             if not existing_station:
                 station = MonitoringStation(
                     station_code=s_data["station_code"],
-                    water_source_id=water_source.id,
+                    water_source_id=river_source.id,
                     station_name=s_data["station_name"],
                     zone=s_data["zone"],
                     location=s_data["location"],

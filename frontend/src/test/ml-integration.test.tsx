@@ -8,7 +8,7 @@
  * navigation.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import type { ReadingAnalysisResponse, MLAnalysis } from "../lib/api";
 
@@ -30,6 +30,7 @@ import MlIndicator from "../components/authority/MlIndicator";
 import CommandCenter from "../pages/authority/CommandCenter";
 import WaterMap from "../pages/authority/WaterMap";
 import PublicSource from "../pages/public/PublicSource";
+import StationDetail from "../pages/authority/StationDetail";
 
 function makeAnalysis(overrides: Partial<MLAnalysis> = {}): MLAnalysis {
   return {
@@ -55,6 +56,8 @@ function makeResponse(ml: MLAnalysis): ReadingAnalysisResponse {
     turbidity: 3.2,
     tds: 240,
     temperature: 26.5,
+    source: "esp32",
+    diagnostics: null,
     ml,
   };
 }
@@ -337,30 +340,52 @@ describe("MlIndicator (live-monitoring compact trio)", () => {
 
 describe("RBAC boundaries (spec §9/§10)", () => {
   it("public source page renders and contains no authority ML analysis", async () => {
+    const station = {
+      id: 1,
+      station_code: "ARK-001",
+      water_source_id: 1,
+      station_name: "Upstream Station",
+      zone: "Z",
+      location: "L",
+      latitude: 13.1,
+      longitude: 77.4,
+      public_warning: "NORMAL",
+      public_message: "Water quality is normal.",
+      is_active: true,
+      created_at: "2026-09-13T00:00:00Z",
+      water_source: { id: 1, source_code: "ARK", name: "River", source_type: "RIVER", description: "", created_at: "" },
+    };
+    // The public page now fetches the station, its latest reading, history and
+    // suitability assessment — each endpoint gets a realistic shape.
     vi.stubGlobal(
       "fetch",
-      vi.fn(() =>
-        Promise.resolve({
-          ok: true,
-          status: 200,
-          json: () =>
-            Promise.resolve({
-              id: 1,
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        const body = url.endsWith("/suitability")
+          ? {
               station_code: "ARK-001",
-              water_source_id: 1,
               station_name: "Upstream Station",
-              zone: "Z",
-              location: "L",
-              latitude: 13.1,
-              longitude: 77.4,
-              public_warning: "NORMAL",
-              public_message: "Water quality is normal.",
-              is_active: true,
-              created_at: "2026-09-13T00:00:00Z",
-              water_source: { id: 1, source_code: "ARK", name: "River", source_type: "RIVER", description: "", created_at: "" },
-            }),
-        })
-      )
+              generated_at: "2026-09-13T00:00:00Z",
+              ruleset_version: "2026.10.1",
+              assessments: [],
+            }
+          : url.includes("/readings/latest")
+            ? {
+                station_code: "ARK-001",
+                timestamp: "2026-09-13T00:00:00Z",
+                pH: null,
+                turbidity: null,
+                turbidity_unit: null,
+                turbidity_status: null,
+                tds: null,
+                temperature: null,
+                source: "esp32",
+              }
+            : url.includes("/readings")
+              ? []
+              : station;
+        return Promise.resolve({ ok: true, status: 200, json: async () => body });
+      })
     );
     // Render with the real route shape so useParams provides stationId.
     render(
@@ -466,5 +491,44 @@ describe("Existing pages still work (spec §16.11/12)", () => {
     renderWithRouter(<CommandCenter />);
     await waitFor(() => expect(screen.getByTestId("ml-summary-title")).toBeInTheDocument());
     expect(screen.getByText("Monitored Water Sources Directory")).toBeInTheDocument();
+  });
+});
+
+describe("Four physical sensors — Dissolved Oxygen removed from hardware monitoring", () => {
+  it("Authority dashboard probe diagnostics reports 4 probes, no DO probe or DO trend tab", () => {
+    renderWithRouter(<CommandCenter />);
+    expect(screen.getByText("4 Probes Online")).toBeInTheDocument();
+    expect(screen.queryByText("5 Probes Online")).not.toBeInTheDocument();
+    expect(screen.queryByText("Dissolved Oxygen Sensor")).not.toBeInTheDocument();
+    expect(screen.queryByText("Dissolved O₂")).not.toBeInTheDocument();
+    // The four remaining physical sensors are still listed.
+    expect(screen.getByText("pH Sensor")).toBeInTheDocument();
+    expect(screen.getByText("TDS Sensor")).toBeInTheDocument();
+    expect(screen.getByText("Turbidity Index Sensor")).toBeInTheDocument();
+    expect(screen.getByText("Temperature Sensor")).toBeInTheDocument();
+  });
+
+  it("StationDetail Live Readings renders exactly 4 sensor cards and no DO card", () => {
+    render(
+      <MemoryRouter initialEntries={["/authority/stations/RIV-ARK"]}>
+        <Routes>
+          <Route path="/authority/stations/:stationId" element={<StationDetail />} />
+        </Routes>
+      </MemoryRouter>
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Live Readings" }));
+
+    const cards = screen.getAllByText(/Within configured range|Outside configured range/);
+    expect(cards).toHaveLength(4);
+    expect(screen.getByText("pH Level")).toBeInTheDocument();
+    expect(screen.getByText("Turbidity Index")).toBeInTheDocument();
+    expect(screen.getByText("TDS")).toBeInTheDocument();
+    expect(screen.getByText("Temperature")).toBeInTheDocument();
+    expect(screen.queryByText("Dissolved O₂")).not.toBeInTheDocument();
+
+    // Audit copy must claim four updated parameters, not five.
+    fireEvent.click(screen.getByRole("button", { name: "Audit History" }));
+    expect(screen.getByText(/4 parameters updated/)).toBeInTheDocument();
+    expect(screen.queryByText(/5 parameters updated/)).not.toBeInTheDocument();
   });
 });

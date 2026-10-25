@@ -13,6 +13,7 @@ from app.services.ml_service import (
     MLValidationError,
     ml_service,
 )
+from app.services.water_suitability import assess_reading, persist_assessments
 
 logger = logging.getLogger("hydrasense.mqtt")
 
@@ -296,6 +297,15 @@ def process_telemetry_payload(payload_str: str, db_session_factory=SessionLocal)
             # Unit only exists alongside a value; NULL = unknown, never NTU.
             turbidity_unit=turbidity_unit if data["turbidity"] is not None else None,
             turbidity_status=turbidity_status if data["turbidity"] is not None else None,
+            # Dedicated relative-index field: populated ONLY when the payload
+            # declares the 0-100 analog index. NTU rows keep it NULL so the two
+            # quantities can never be confused downstream.
+            turbidity_index=(
+                float(data["turbidity"])
+                if data["turbidity"] is not None
+                and turbidity_unit == TURBIDITY_UNIT_RELATIVE
+                else None
+            ),
             source=data.get("source") or "simulator",
             diagnostics=data.get("diagnostics"),
         )
@@ -308,6 +318,24 @@ def process_telemetry_payload(payload_str: str, db_session_factory=SessionLocal)
             f"unit={reading.turbidity_unit}, status={reading.turbidity_status}, "
             f"tds={reading.tds}, temp={reading.temperature})"
         )
+
+        # Standards-based suitability assessments are DERIVED data: compute and
+        # persist them for this reading immediately, separately from the raw
+        # measurement. A failure here never loses the reading (already
+        # committed above).
+        try:
+            suitability = assess_reading(reading)
+            persist_assessments(db, station.id, suitability)
+            logger.info(
+                "Suitability assessments stored for SensorReading id=%s (%s uses)",
+                reading.id, len(suitability),
+            )
+        except Exception as err:  # noqa: BLE001 - assessment must never drop telemetry
+            db.rollback()
+            logger.error(
+                "Suitability assessment failed for SensorReading id=%s: %s",
+                reading.id, err, exc_info=True,
+            )
 
         # ML honesty: the models were trained on NTU-style turbidity. A relative
         # index 0-100 is a different quantity, so feeding it to the model would

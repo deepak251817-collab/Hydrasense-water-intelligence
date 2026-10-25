@@ -2,6 +2,7 @@ import { useState } from "react";
 import { mockWaterSources } from "../../data/mockData";
 import WaterTrendChart from "../../components/authority/WaterTrendChart";
 import PredictionCard from "../../components/authority/PredictionCard";
+import ModelHealthCard from "../../components/authority/ModelHealthCard";
 import { LineChart, Sparkles } from "lucide-react";
 
 export default function Analytics() {
@@ -38,6 +39,9 @@ export default function Analytics() {
           ))}
         </select>
       </div>
+
+      {/* Real model health + evaluation metrics (backend /authority/ml/status) */}
+      <ModelHealthCard />
 
       {/* Main Analytics Grid */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">

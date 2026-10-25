@@ -128,7 +128,7 @@ export default function WaterSourceCard({ source, isSelected = false, onClick }:
         </div>
         <div className="rounded-xl bg-slate-50 p-2 text-center border border-slate-100">
           <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">Turb</p>
-          <p className="mt-0.5 text-xs font-extrabold text-slate-800">{source.turbidity}<span className="text-[8px] font-normal text-slate-400"> NTU</span></p>
+          <p className="mt-0.5 text-xs font-extrabold text-slate-800">{source.turbidity}<span className="text-[8px] font-normal text-slate-400"> / 100 index (not NTU)</span></p>
         </div>
         <div className="rounded-xl bg-slate-50 p-2 text-center border border-slate-100">
           <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">TDS</p>

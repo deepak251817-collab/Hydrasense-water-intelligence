@@ -13,6 +13,8 @@ An AI-powered water quality intelligence and predictive response system. IoT sen
 - **Honest turbidity units** — every reading stores its turbidity unit: ESP32 hardware sends a **provisional relative index 0–100** (higher = cloudier, *not* NTU), the simulator sends NTU, and rows with no unit stay “unknown”. The dashboard labels each case explicitly and never mixes units on one chart.
 - **Live ML inference on every reading** — Isolation Forest anomaly scoring + Random Forest Safe/Unsafe classification, written back to the same `sensor_readings` row. If ML fails or artifacts are missing, the reading is stored with NULL ML fields — **no fabricated predictions**.
 - **Role-based access control** — JWT authentication (Argon2 password hashing) with two roles: `AUTHORITY` and `PRODUCT_USER`. ML analysis endpoints are authority-only; public endpoints expose no model internals.
+- **Live four-sensor assessment** — Live Monitoring reads the real ESP32/MQTT window, waits for **10 valid samples over 20 s**, checks stability per parameter and runs one shared, explainable screening service for Drinking, Domestic Use, Irrigation, Swimming/Recreation or Aquaculture. Stable readings are never treated as calibrated readings.
+- **Private product-user tests** — a signed-in product user activates a product code, chooses a water source and intended use, and receives the same screening from their own device's live window (or clearly labelled SIMULATION values). Results are stored per account and are not visible to other users.
 - **Authority dashboard** — command center, live monitoring, water map, station detail with AI analysis, alerts, incidents, inspections, laboratory, and analytics views.
 - **Public transparency pages** — water check, nearby sources, warnings, and QR/scannable source pages with no ML internals exposed.
 - **Explainable AI** — SHAP explanations (global + local) for both tree models, with model-independence verification (predictions bit-identical before/after explanation).
@@ -35,6 +37,22 @@ REST API  (/api/auth, /api/public, /api/product, /api/authority)
         ▼
 React frontend (Vite + TypeScript) — public pages, user portal, authority dashboard
 ```
+
+---
+
+## Documentation
+
+Full audit and presentation material lives in [`docs/`](docs/):
+
+| Document | What it covers |
+|---|---|
+| [docs/PROJECT_GUIDE.md](docs/PROJECT_GUIDE.md) | Architecture, data flow, ER model, ML pipeline, module walkthrough (Mermaid diagrams) |
+| [docs/FEATURE_STATUS.md](docs/FEATURE_STATUS.md) | What is verified, partial, or UI-only — read before demoing |
+| [docs/DATASET_CATALOG.md](docs/DATASET_CATALOG.md) | Every dataset with real row counts, ranges and provenance status |
+| [docs/DATA_CLEANING_REPORT.md](docs/DATA_CLEANING_REPORT.md) | Exactly which cleaning operations ran, with verification |
+| [docs/PRESENTATION_DEMO_GUIDE.md](docs/PRESENTATION_DEMO_GUIDE.md) | 10-minute demo script, pre-flight checks, failure fallbacks |
+| [docs/PRESENTATION_QA.md](docs/PRESENTATION_QA.md) | Viva questions with honest technical answers |
+| [docs/PROJECT_AUDIT_REPORT.md](docs/PROJECT_AUDIT_REPORT.md) | Audit findings, limitations and the five most urgent remaining tasks |
 
 ---
 
@@ -78,6 +96,7 @@ React frontend (Vite + TypeScript) — public pages, user portal, authority dash
 │   ├── models/              # persisted .joblib artifacts (served by the backend)
 │   ├── data/                # raw / processed / external (USGS, benchmark datasets)
 │   └── tests/               # 140+ ML tests (leakage, reproducibility, persistence)
+├── docs/                    # audit report, project guide, dataset catalog, demo guide, Q&A
 ├── requirements.txt         # backend dependencies
 └── pytest.ini
 ```
@@ -125,6 +144,7 @@ Backend environment variables (`backend/.env`):
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `60` | Token lifetime |
 | `MQTT_BROKER_HOST` / `MQTT_BROKER_PORT` | `localhost` / `1883` | Broker address |
 | `MQTT_TOPIC_PREFIX` | `hydrasense/stations` | Telemetry topic prefix |
+| `DEMO_STRICT_TDS_RULE` | `true` | Enables the project-specific <200 mg/L drinking-water TDS target. Set `false` to disable it; it never affects domestic, irrigation, swimming or aquaculture. |
 
 ### 3. MQTT broker
 
@@ -255,7 +275,185 @@ python ml/scripts/export_sensor_data.py        # extract telemetry from PostgreS
 python ml/scripts/train_isolation_forest.py
 python ml/scripts/train_random_forest.py
 python ml/scripts/explain_random_forest.py --verify-consistency
+python ml/scripts/build_evaluation_report.py   # compute real metrics from saved artifacts
 ```
+
+### Water Suitability Assessment (BIS IS 10500 / CPCB)
+
+The standards-based assessment lives in `backend/app/services/water_suitability.py` and screens six intended uses: drinking water, domestic use, outdoor bathing, irrigation, industrial cooling and aquatic life. It compares **only** values that are genuinely comparable:
+
+- physical hardware readings (`source = esp32`) with `calibration_status = calibrated`;
+- turbidity only when stored as **NTU** (the ESP32 relative index is never compared);
+- readings fresher than 5 minutes (older ones are reported as stale, never as a current conclusion).
+
+Uncalibrated estimates, relative-index turbidity and simulated values are listed as **excluded**, never silently compared. Missing laboratory parameters (microbiology, nitrate, arsenic, DO/BOD/coliform, EC/SAR/boron) are reported as required tests, so the module never calls a sample safe to drink from pH/TDS/turbidity alone.
+
+| Result code | Meaning |
+|---|---|
+| `preliminary_suitable` | every criterion for the use was measured and within its acceptable limit (never emitted for drinking water) |
+| `treatment_required` | a measured value is within the relaxed/permissible limit, or treatment is required by the use |
+| `outside_limits` | at least one measured value exceeds the applicable limit |
+| `lab_confirmation_required` | measurable criteria pass, but required laboratory parameters are unavailable |
+| `insufficient_data` | no comparable measurement, missing critical parameters, or stale data |
+
+Assessments are persisted once per `(reading, use, ruleset version)` in `water_suitability_assessments` (migration `d4e5f6a7b8c9`, reversible). Original readings are never modified. The UI section (`WaterSuitabilitySection`) appears on authority Live Monitoring and on the public QR page.
+
+### Live four-sensor assessment (Live Monitoring + Product User)
+
+`backend/app/services/water_screening.py` is the single rule-based service used by
+both `GET /api/authority/stations/{code}/live-assessment` and `POST /api/product/tests`.
+It needs only the four existing measurements — pH, TDS, turbidity and temperature.
+No extra sensor, dataset or trained model is required for the initial screening.
+
+**Rolling-window stability** (`backend/app/services/sensor_stability.py`) uses the
+station's real stored readings and never inserts synthetic values:
+
+| Check | Development setting |
+|---|---|
+| Window | at least 10 valid samples spanning at least 20 s |
+| pH | range ≤ 0.10 |
+| TDS | range ≤ max(10 mg/L, 5% of median) |
+| Relative turbidity index | range ≤ 5 index points |
+| Calibrated NTU | range ≤ max(0.2 NTU, 10% of median) |
+| Temperature | range ≤ 0.5 °C |
+| Fresh sample | latest reading ≤ 30 s old (firmware publishes every 3 s) |
+| Offline | latest reading > 120 s old |
+
+A stable window means only that the values are consistent. **Stability is not
+calibration**: the device's per-sensor `calibration_status` is read from telemetry
+diagnostics and reported separately. A live test with unverified calibration
+returns `INCONCLUSIVE`, never a green pass. Demo values are labelled `SIMULATION`.
+
+**Reference profiles and overall states**
+
+| Intended use | Configured references |
+|---|---|
+| Drinking | BIS IS 10500:2012: pH 6.5–8.5; TDS 500 mg/L acceptable / 2000 mg/L permissible; turbidity 1 NTU acceptable / 5 NTU permissible (calibrated NTU only). The project adds a **drinking-only** demo target of 200 mg/L. |
+| Domestic Use | The same BIS values, with the strict 200 mg/L demo target deliberately **not** applied. Bathing, washing, cleaning and gardening can have different requirements. |
+| Irrigation | FAO-style TDS salinity categories: <450 mg/L no restriction indicated, 450–2000 slight-to-moderate, >2000 severe; pH reference 6.5–8.4. TDS is a salinity proxy, not electrical conductivity. |
+| General Non-Potable Use | BIS pH 6.5–8.5 as an advisory screening range; TDS and temperature carry **no** pass/fail limit for this use and are shown for context. Outcomes are phrased “Measured indicators are within the configured general (non-potable) screening ranges”, “Caution — further testing or treatment may be needed” or “Unfavourable measured indicators — investigation recommended”. The drinking-only strict TDS target is never applied here. |
+| Swimming / Recreation | pH 6.5–8.5 and calibrated-NTU turbidity where available. Microbiology and site-specific criteria are required, so the best possible state is `REVIEW_RECOMMENDED`. |
+| Aquaculture | The four values are displayed, but without species-specific criteria and measured dissolved oxygen/ammonia/nitrite/salinity the result is `INCONCLUSIVE`. |
+
+Overall states are `WITHIN_PROJECT_TARGETS`, `REVIEW_RECOMMENDED`,
+`NOT_RECOMMENDED_BY_SCREENING` and `INCONCLUSIVE`. Every state carries the exact
+reasons, references and next steps; `WITHIN_PROJECT_TARGETS` explicitly says that
+it does not certify that water is safe to drink.
+
+**Project-specific strict TDS rule (drinking only)**
+
+With `DEMO_STRICT_TDS_RULE=true` (default), a drinking-water TDS below 200 mg/L is
+reported as `below_project_target`, and the result headline reads **“Not suitable
+by the project's strict TDS target”**. When the same sample also has unverified
+calibration or unstable data, the overall state stays `INCONCLUSIVE`, but the
+headline and summary still say that TDS is below 200 ppm and why the sample does
+not meet the project target — the low-TDS concern is never hidden behind a generic
+“more data required” message. This is **not** an official BIS determination that
+the water is unsafe. Values
+from 200 to below 500 mg/L meet the project target; 500–2000 mg/L is above the
+acceptable BIS reference (the permissible limit applies only when no alternate
+source exists); above 2000 mg/L exceeds the permissible reference. The rule is
+isolated to the drinking profile and can be disabled in the backend environment.
+
+**Turbidity honesty.** The ESP32 reports a provisional relative 0–100 index, not
+NTU. That value is shown with its real unit and is never compared with the 1 NTU
+or 5 NTU limits. Only a calibrated NTU measurement is compared with the BIS
+turbidity references. Temperature is displayed as context/trend only: there is no
+invented universal drinking-water temperature pass/fail threshold.
+
+The shared assessment returns the test ID/timestamp, device, source, intended use,
+all four values and units, freshness/stability, calibration status, reference
+profile and criteria version, per-parameter status, overall status, every reason
+and next step, and `prediction.available = false` with
+“Future prediction unavailable — forecasting model not configured.” No forecasting
+model is fabricated for this feature.
+
+Product-user tests are private (`ProductWaterTest.user_id`) and persist the full
+assessment JSON plus the reading it used. The Live Monitoring polling path stores
+one `live_water_assessments` row per stable `(reading, use, criteria_version)`
+(migration `a8c9d0e1f2b3`, reversible); unstable/offline windows are not persisted.
+
+### Three-river demonstration dataset
+
+The demonstration system uses exactly **three rivers** — **Arkavathi**, **Cauvery**
+and **Vrishabhavathi** — each with its own monitoring location(s). Unrelated sample
+lakes, ponds and reservoirs were removed from the demo dataset, source selectors,
+river cards, trends, alerts and detail pages. Run `python backend/scripts/seed_demo.py`
+after the migrations to create the three sources and their stations
+(`ARK-001..003`, `CAU-001`, `VRS-001`, `VRS-002`). Every demo location and reading
+is labelled as simulated demonstration data — it is never presented as verified
+real-world information.
+
+### Turbidity index vs. NTU (`turbidity_index`)
+
+Migration `b9c0d1e2f3a4` adds a dedicated `sensor_readings.turbidity_index` column
+for the analog sensor's **relative 0–100 index (higher = cloudier)**. It is stored
+separately from `turbidity` when that row's unit is NTU, backfilled only for rows
+already tagged `relative_index_0_100`, and it is:
+
+- displayed as **“Turbidity Index (0–100)”** (never labelled NTU),
+- banded with the firmware's documented demo thresholds — CLEARER < 30,
+  MODERATE 30–54, CLOUDIER ≥ 55,
+- never compared with the 1 NTU / 5 NTU limits, and
+- never converted to NTU.
+
+Historical NTU rows keep their own `turbidity_unit = "ntu"` and stay untouched.
+
+### Simulation mode (no ESP32 required)
+
+Authority → **Simulation** (`/authority/simulation`) drives
+`backend/app/services/simulation_service.py` through
+`POST /api/simulation/start`, `/pause` and `/generate` (plus `GET
+/api/simulation/state`):
+
+- scenarios: `normal`, `gradual_deterioration`, `sudden_change`, `sensor_fault`;
+- optional **seed** for a reproducible sequence (used by the tests);
+- samples cover exactly pH, TDS, temperature and turbidity index, are timestamped
+  and linked to the selected river/station, and are stored with
+  `source = "simulator"` and diagnostics label **“SIMULATED DATA — NOT LIVE SENSOR
+  DATA”**;
+- a sensor-fault sample stores **NULL** for the failing sensor — a missing reading
+  is never replaced by zero or an invented value;
+- generated rows use the same persistence path as hardware telemetry, so trends,
+  screening results and alerts update from them while remaining distinguishable
+  from real ESP32 readings.
+
+### Danger-level alerts (to the product user)
+
+`backend/app/services/alerting.py` derives alerts from real data only:
+`GET /api/product/alerts` combines the latest live reading of the user's own
+device with their most recent saved tests. Each entry carries the parameter,
+measured value + unit, the configured reference, the reason, the next step,
+whether the source was live or simulated, and a severity:
+
+- `critical` — pH < 6.0 or > 9.0, TDS > 2000 mg/L, turbidity index ≥ 80;
+- `warning` — pH outside 6.5–8.5, TDS > 500 mg/L, turbidity index ≥ 55
+  (CLOUDIER demo band), an unusual temperature, a stale reading, or a sensor
+  that stopped reporting (NULL is reported as NULL).
+
+The user dashboard shows these alerts prominently above the device cards.
+Turbidity alerts always state that the index is not an NTU measurement.
+
+### Standards reference dataset
+
+`docs/standards_reference.csv` keeps official reference limits separate from
+measurements: standard code, name, authority, edition/revision, parameter, unit,
+threshold type/value, applicable use, whether this device can measure it, a source
+URL, and notes. Sources: BIS IS 10500:2012 (Amd. 4), FAO Irrigation and Drainage
+Paper 29 Rev. 1, CPCB Designated Best Use criteria, and the WHO Guidelines for
+Drinking-water Quality, 4th edition (2022). Project-specific demo thresholds
+(the <200 mg/L TDS target and the turbidity-index bands) are listed in the same
+file but flagged as `PROJECT-*` rows so they can never be mistaken for an official
+standard. NTU-based compliance cannot be established with the current analog
+sensor without a validated conversion or a calibrated NTU instrument.
+
+### Public QR codes
+
+Each station's public page is `/public/source/<station_code>`; the QR card on Live Monitoring encodes that exact URL and offers an SVG download. Set `VITE_PUBLIC_BASE_URL` (frontend `.env`) to your LAN or deployed origin before scanning from a phone — otherwise the QR encodes `localhost` and only works on the presenting machine. The public page and its API endpoints require no login and expose no device diagnostics, credentials or private data.
+
+### Model health & evaluation transparency
+
+`python ml/scripts/build_evaluation_report.py` loads the saved model artifacts, scores the held-out test splits, and writes a machine-readable report to `ml/reports/evaluation_report.json` plus a human-readable `ml/reports/evaluation_report.md`. Every metric is computed at generation time from repository artifacts — nothing is hardcoded. The authority-only endpoint `GET /api/authority/ml/status` serves this report together with the live model load state, and the Analytics dashboard renders it in the **Model Health & Evaluation** card. If the report has not been generated, the API returns `evaluation_available: false` and the UI says so — no placeholder metrics are ever shown.
 
 ---
 
@@ -264,6 +462,9 @@ python ml/scripts/explain_random_forest.py --verify-consistency
 ```bash
 # Backend (pytest, in-memory SQLite — no PostgreSQL or broker needed)
 python -m pytest backend/tests -v
+
+# Focused assessment tests (TDS/pH boundaries, stability, calibration, uses)
+cd backend && python -m pytest tests/test_product_screening.py tests/test_product_tests.py -v
 
 # ML pipeline (140+ tests: leakage, reproducibility, persistence, SHAP)
 python -m pytest ml/tests -v
@@ -291,6 +492,15 @@ Base URL: `http://127.0.0.1:8000/api` — interactive docs at [`/docs`](http://1
 | `/api/authority` | `AUTHORITY` | stations, readings, alerts, incidents, map, analytics |
 | `/api/authority/readings/{id}/analysis` | `AUTHORITY` | reading + ML analysis (NULL fields if not analysed) |
 | `/api/authority/stations/{code}/readings/latest/analysis` | `AUTHORITY` | latest reading + ML analysis for a station |
+| `/api/authority/ml/status` | `AUTHORITY` | model load state + computed evaluation report |
+| `/api/authority/stations/{code}/suitability` | `AUTHORITY` | BIS/CPCB suitability for the latest reading |
+| `/api/authority/stations/{code}/live-assessment?use=drinking` | `AUTHORITY` | Stable four-sensor assessment for the selected use (`drinking`, `domestic`, `irrigation`, `swimming`, `aquaculture`) |
+| `/api/product/devices`, `/api/product/activate` | `PRODUCT_USER` | Owned product devices and product-code activation |
+| `POST /api/product/tests` | `PRODUCT_USER` | Run a live (stable window) or explicitly labelled demo test and persist it |
+| `GET /api/product/tests`, `/api/product/tests/{id}` | `PRODUCT_USER` | Private test history and full saved assessment |
+| `/api/public/stations/{code}/readings/latest` | Public | latest reading for the QR page (no diagnostics) |
+| `/api/public/stations/{code}/readings` | Public | recent public-safe readings for the trend chart |
+| `/api/public/stations/{code}/suitability` | Public | suitability assessment for the QR page |
 
 ML analysis responses contain `anomaly_label` (0 = normal, 1 = anomalous condition), `anomaly_score`, `water_quality_label` ("Safe"/"Unsafe" predicted), `safe_probability`/`unsafe_probability`, and `ml_processed_at`. Internal model paths and parameters are never exposed.
 
@@ -309,6 +519,10 @@ ML analysis responses contain `anomaly_label` (0 = normal, 1 = anomalous conditi
 | Serial: `[ADS] ERROR: ADS1115 not found` | I²C wiring/address; analog values publish `null` with a `device.errors` entry instead of fake numbers. |
 | Serial: `[TIME] NTP not synced yet` | Normal for the first seconds after boot; publishing starts once time is valid. |
 | Dashboard shows `(unit unknown)` | Row predates unit tracking; it is intentionally not labelled NTU or relative index. |
+| Live Monitoring says **Reading unstable** | A parameter's range exceeds the configured tolerance in `sensor_stability.py`; keep the probe submerged until 10 valid samples over 20 s are within tolerance. Do not bypass stability to force a pass. |
+| Product test returns `unstable_reading` (409) | The device has fewer than 10 valid samples, under 20 s of data, a stale latest sample, or a parameter outside tolerance. Wait and retry; only demo mode works without a stable live window. |
+| Result is **Inconclusive** with “calibration is unverified” | The device's diagnostics report `pending`/provisional calibration. Calibrate the probes and record the calibration; stability alone is not calibration. |
+| TDS below 200 mg/L shows **Below project strict target** | This is the project's demo rule, not an official BIS rule. Set `DEMO_STRICT_TDS_RULE=false` in the backend environment to disable it for drinking water only. |
 | `alembic upgrade head` fails on diagnostics backfill | Run against PostgreSQL 12+ (JSON operators); the backfill is skipped on other dialects. |
 
 ---
@@ -320,7 +534,9 @@ This project deliberately constrains its claims:
 - **Anomaly ≠ contamination.** Isolation Forest flags readings unusual relative to its training telemetry; it does not confirm chemical contamination.
 - **Predicted class ≠ potability.** The Random Forest reproduces the labeling rules of its benchmark dataset; it is not laboratory confirmation or a guarantee of safety.
 - **Simulator data is not ground truth.** Scenario names exist for pipeline testing only and are never used as scientific labels.
-- **Four sensors have limits.** Heavy metals, microplastics, pharmaceuticals, and microbial pathogens that do not affect pH/TDS/turbidity/temperature cannot be detected by these parameters alone.
+- **Four sensors have limits.** Heavy metals, microplastics, pharmaceuticals, and microbial pathogens that do not affect pH/TDS/turbidity/temperature cannot be detected by these parameters alone. A `WITHIN_PROJECT_TARGETS` result means only that no *monitored* concern was detected; it is not a potability certificate.
+- **Low TDS is a project preference, not a safety verdict.** The <200 mg/L drinking-water flag is a demo rule. Low TDS alone does not make water unsafe, and high TDS alone does not identify which contaminants are present.
+- **Stability ≠ calibration.** A stable rolling window can still come from provisional sensors; live results with unverified calibration are reported as `INCONCLUSIVE`.
 - **Forecasting honesty.** The XGBoost deterioration target is a rule-based indicator on a single USGS station (~5 weeks synchronized); temporal performance drop from validation to test is documented, not tuned away.
 - **No fabricated results.** Missing ML artifacts, failed inference, or pre-ML readings all produce NULL ML fields, rendered in the UI as "Analysis unavailable".
 - **Turbidity is not always NTU.** ESP32 hardware reports a **provisional relative index 0–100** anchored to two sample-based sensor voltages (≈0.354 V clear, ≈0.273 V cloudy). It is a relative trend indicator, **not** a calibrated NTU measurement and **not** a safety verdict; converting it to NTU requires the two-point calibration in [firmware/README.md](firmware/README.md) §10.

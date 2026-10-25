@@ -61,6 +61,9 @@ class LatestSensorReadingResponse(BaseModel):
     # provisional 0-100 index, higher = cloudier, NOT NTU), "ntu" (simulated
     # NTU-style value) or None = unknown. Never assume NTU.
     turbidity_unit: Optional[str] = None
+    # Dedicated analog-sensor field: relative turbidity index 0-100
+    # (higher = cloudier). NULL for NTU rows. Never compared with NTU limits.
+    turbidity_index: Optional[float] = None
     # Firmware-reported band: CLEARER / MODERATE / CLOUDIER (relative index only).
     turbidity_status: Optional[str] = None
     tds: Optional[float] = None
@@ -82,6 +85,9 @@ class SensorReadingResponse(BaseModel):
     turbidity: Optional[float] = None
     # "relative_index_0_100" | "ntu" | None (unknown) — never assume NTU.
     turbidity_unit: Optional[str] = None
+    # Dedicated analog-sensor field: relative turbidity index 0-100
+    # (higher = cloudier). NULL for NTU rows. Never compared with NTU limits.
+    turbidity_index: Optional[float] = None
     # CLEARER / MODERATE / CLOUDIER for relative-index rows, else None.
     turbidity_status: Optional[str] = None
     tds: Optional[float] = None

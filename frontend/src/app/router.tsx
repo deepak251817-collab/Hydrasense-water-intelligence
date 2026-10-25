@@ -20,11 +20,13 @@ import UserDashboard from "../pages/user/UserDashboard";
 import UserCheckWater from "../pages/user/UserCheckWater";
 import UserDevices from "../pages/user/UserDevices";
 import UserHistory from "../pages/user/UserHistory";
+import TestResult from "../pages/user/TestResult";
 
 // Authority Pages
 import CommandCenter from "../pages/authority/CommandCenter";
 import WaterSources from "../pages/authority/WaterSources";
 import LiveMonitoring from "../pages/authority/LiveMonitoring";
+import Simulation from "../pages/authority/Simulation";
 import Alerts from "../pages/authority/Alerts";
 import Incidents from "../pages/authority/Incidents";
 import Inspections from "../pages/authority/Inspections";
@@ -119,6 +121,14 @@ export const router = createBrowserRouter([
             <UserHistory />
           </ProtectedRoute>
         ),
+      },
+      {
+        path: "tests/:testId",
+        element: (
+          <ProtectedRoute requiredRole="PRODUCT_USER">
+            <TestResult />
+          </ProtectedRoute>
+        ),
       }
     ],
   },
@@ -147,6 +157,14 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requiredRole="AUTHORITY">
             <LiveMonitoring />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "simulation",
+        element: (
+          <ProtectedRoute requiredRole="AUTHORITY">
+            <Simulation />
           </ProtectedRoute>
         ),
       },

@@ -56,7 +56,7 @@ export default function SensorHealth({ probes }: SensorHealthProps) {
           </h2>
         </div>
         <span className="rounded-full bg-slate-100 border border-slate-200 px-2.5 py-0.5 text-[10px] font-bold text-slate-600">
-          5 Probes Online
+          {probes.length} Probes Online
         </span>
       </div>
 

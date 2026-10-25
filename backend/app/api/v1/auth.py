@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.security import get_password_hash, verify_password, create_access_token
@@ -13,18 +14,35 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 def register(request: UserRegisterRequest, db: Session = Depends(get_db)):
-    # Check for duplicate email
-    existing_user = db.query(User).filter(User.email == request.email).first()
+    # Check for duplicate email (emails are stored lower-cased)
+    existing_user = db.query(User).filter(
+        func.lower(User.email) == request.email.strip().lower()
+    ).first()
     if existing_user:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Email already registered"
         )
 
-    # Product registration verification if product_code supplied
+    # Public registration is for product users only. Never let a request
+    # choose the AUTHORITY role.
+    if request.role != UserRole.PRODUCT_USER:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Public registration is only available for product users"
+        )
+
+    # Product registration verification if product_code supplied. The row is
+    # locked so two concurrent registrations cannot claim the same device.
     device = None
     if request.product_code:
-        device = db.query(ProductDevice).filter(ProductDevice.product_code == request.product_code).first()
+        code = request.product_code.strip().upper()
+        device = (
+            db.query(ProductDevice)
+            .filter(func.upper(ProductDevice.product_code) == code)
+            .with_for_update()
+            .first()
+        )
         if not device:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -38,10 +56,10 @@ def register(request: UserRegisterRequest, db: Session = Depends(get_db)):
 
     # Create new user
     new_user = User(
-        email=request.email,
+        email=request.email.strip().lower(),
         password_hash=get_password_hash(request.password),
-        full_name=request.full_name,
-        role=request.role,
+        full_name=request.full_name.strip(),
+        role=UserRole.PRODUCT_USER,
         is_active=True
     )
     db.add(new_user)
@@ -60,7 +78,9 @@ def register(request: UserRegisterRequest, db: Session = Depends(get_db)):
 
 @router.post("/login", response_model=TokenResponse)
 def login(request: UserLoginRequest, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == request.email).first()
+    user = db.query(User).filter(
+        func.lower(User.email) == request.email.strip().lower()
+    ).first()
     if not user or not verify_password(request.password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

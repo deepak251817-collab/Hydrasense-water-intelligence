@@ -45,9 +45,9 @@ export default function WaterCheck() {
           icon: AlertTriangle,
           headline: "Preliminary Screening: Treatment Advised",
           why: [
-            "Raw lake/reservoir water requires secondary disinfection and filtration before potable use.",
-            `Measured turbidity (${selectedSource.turbidity} NTU) is acceptable for raw surface water but exceeds standard potable water tap limits (<1 NTU).`,
-            "Microbiological parameters (e.g., coliform bacteria) cannot be measured by real-time optical IoT probes alone.",
+            "Raw river water requires secondary disinfection and filtration before potable use.",
+            `The relative turbidity index is ${selectedSource.turbidity} / 100 (higher = cloudier, not NTU); NTU compliance needs a calibrated instrument.`,
+            "Microbiological parameters (e.g., coliform bacteria) cannot be measured by these sensors alone.",
           ],
           recommendation: "Boiling, certified multi-stage RO/UV filtration, or authorized municipal pipeline treatment is required before drinking.",
         };
@@ -56,12 +56,11 @@ export default function WaterCheck() {
         status: "NOT RECOMMENDED FOR DRINKING",
         badgeColor: "bg-red-100 text-red-800 border-red-300",
         icon: ShieldAlert,
-        headline: "High Risk for Direct Consumption",
-        why: [
-          `Elevated turbidity (${selectedSource.turbidity} NTU) indicates high suspended solids and organic load.`,
-          `Recent water-quality telemetry is ${selectedSource.trendDirection} at this location.`,
-          `Current Health Index rating is ${selectedSource.healthScore}/100 with elevated dissolved solids (${selectedSource.tds} mg/L).`,
-        ],
+        headline: "High Risk for Direct Consumption",          why: [
+            `The relative turbidity index is ${selectedSource.turbidity} / 100 (CLOUDIER demo band ≥ 55), indicating high suspended solids.`,
+            `Recent water-quality telemetry is ${selectedSource.trendDirection} at this location.`,
+            `Current Health Index rating is ${selectedSource.healthScore}/100 with elevated total dissolved solids (${selectedSource.tds} mg/L).`,
+          ],
         recommendation: "Avoid direct consumption. Do not use for drinking or culinary preparation without certified laboratory verification and high-grade purification.",
       };
     }
@@ -74,7 +73,7 @@ export default function WaterCheck() {
           icon: ShieldAlert,
           headline: "Severe Water Condition",
           why: [
-            "Low dissolved oxygen and severe turbidity indicate high organic degradation.",
+            "A high turbidity index and elevated TDS indicate heavy suspended and dissolved loads.",
             "Water may cause skin irritation or stain washing fixtures.",
           ],
           recommendation: "Do not use for bathing, washing utensils, or laundry until public advisories are lifted.",
@@ -128,8 +127,8 @@ export default function WaterCheck() {
           icon: ShieldAlert,
           headline: "Recreational Contact Warning Active",
           why: [
-            "Turbidity is high and dissolved oxygen is depleted.",
-            "High probability of algal blooms or organic bacterial proliferation.",
+            "The turbidity index is in the CLOUDIER demo band; microbiological risk cannot be assessed with these sensors.",
+            "Algal blooms or bacterial proliferation require laboratory testing to rule out.",
           ],
           recommendation: "Avoid full body immersion swimming or skin contact. Secondary contact boating permitted with caution.",
         };
@@ -147,31 +146,18 @@ export default function WaterCheck() {
       };
     }
 
-    // Aquaculture default
-    if (selectedSource.dissolvedOxygen < 5.0) {
-      return {
-        status: "RESTRICTED FOR AQUACULTURE",
-        badgeColor: "bg-red-100 text-red-800 border-red-300",
-        icon: ShieldAlert,
-        headline: "Low Dissolved Oxygen Threat",
-        why: [
-          `Dissolved Oxygen is ${selectedSource.dissolvedOxygen} mg/L (critical threshold is >5.0 mg/L for healthy fish).`,
-          "Risk of fish asphyxiation and distress in captive aquaculture enclosures.",
-        ],
-        recommendation: "Immediate mechanical aeration required before stocking fish or maintaining aquatic culture.",
-      };
-    }
-
+    // Aquaculture default — no dissolved-oxygen / ammonia / salinity sensors,
+    // so no suitability verdict can be produced from four readings.
     return {
-      status: "SUITABLE FOR AQUATIC LIFE",
-      badgeColor: "bg-emerald-100 text-emerald-800 border-emerald-300",
-      icon: CheckCircle2,
-      headline: "Favorable Dissolved Oxygen & pH",
+      status: "INSUFFICIENT PARAMETERS",
+      badgeColor: "bg-slate-100 text-slate-700 border-slate-300",
+      icon: ShieldAlert,
+      headline: "Insufficient parameters for aquaculture",
       why: [
-        `Dissolved oxygen (${selectedSource.dissolvedOxygen} mg/L) supports aerobic aquatic organisms.`,
-        `pH (${selectedSource.pH}) is neutral and non-corrosive.`,
+        "Dissolved oxygen, ammonia, nitrite and salinity are not measured by this hardware, and no species-specific criteria are configured.",
+        `Available readings: pH ${selectedSource.pH}, TDS ${selectedSource.tds} mg/L, temperature ${selectedSource.temperature} °C, turbidity index ${selectedSource.turbidity} / 100 (not NTU).`,
       ],
-      recommendation: "Nominal conditions for carp, tilapia, and local aquatic biodiversity.",
+      recommendation: "Measure dissolved oxygen and the species-specific water-chemistry parameters before stocking or maintaining aquatic culture.",
     };
   };
 

@@ -6,6 +6,10 @@ export interface ApiError {
   detail?: string;
   message?: string;
   statusCode?: number;
+  /** Machine-readable code from structured API errors (e.g. device_offline). */
+  code?: string;
+  /** Validation details for structured API errors (e.g. invalid readings). */
+  errors?: string[];
 }
 
 interface FetchOptions extends RequestInit {
@@ -34,9 +38,16 @@ async function fetchApi<T>(
     const data = await response.json();
 
     if (!response.ok) {
+      const rawDetail = data?.detail;
+      const structured = rawDetail && typeof rawDetail === "object" ? rawDetail : null;
       const error: ApiError = {
-        detail: data.detail || data.message || "Unknown error",
+        detail:
+          typeof rawDetail === "string"
+            ? rawDetail
+            : structured?.message || data?.message || "Unknown error",
         statusCode: response.status,
+        code: structured?.code || data?.code,
+        errors: structured?.errors,
       };
       throw error;
     }
@@ -133,6 +144,377 @@ export interface ProductDevice {
   owner_id?: number;
   activated_at?: string;
   created_at: string;
+}
+
+// ============= Product-user water testing =============
+
+export type WaterSourceCode =
+  | "tap"
+  | "borewell"
+  | "well"
+  | "tank"
+  | "surface"
+  | "other";
+
+export type IntendedUseCode =
+  | "drinking"
+  | "domestic"
+  | "irrigation"
+  | "general"
+  | "swimming"
+  | "aquaculture";
+
+export type ReadingMode = "live" | "demo";
+
+export type ParameterStatus =
+  | "within_range"
+  | "below_project_target"
+  | "above_acceptable"
+  | "above_permissible"
+  | "below_reference"
+  | "above_reference"
+  | "no_restriction"
+  | "slight_restriction"
+  | "severe_restriction"
+  | "not_comparable"
+  | "not_measured"
+  | "invalid"
+  | "informational";
+
+export type OverallStatus =
+  | "WITHIN_PROJECT_TARGETS"
+  | "REVIEW_RECOMMENDED"
+  | "NOT_RECOMMENDED_BY_SCREENING"
+  | "INCONCLUSIVE";
+
+export interface ProductReasonDetail {
+  parameter: string;
+  label: string;
+  value: number | null;
+  unit: string;
+  status: ParameterStatus;
+  status_label: string;
+  reference: string;
+  reason: string;
+  calibration_limitation: string | null;
+  next_step: string;
+}
+
+export interface ProductStabilityAssessment {
+  status:
+    | "waiting_for_data"
+    | "collecting"
+    | "stabilizing"
+    | "stable"
+    | "unstable"
+    | "offline"
+    | "sensor_error";
+  status_label: string;
+  message: string;
+  stable: boolean;
+  stale: boolean;
+  connection: "connected" | "connecting" | "offline" | "error" | "no_data";
+  valid_samples: number;
+  required_samples: number;
+  span_seconds: number;
+  required_span_seconds: number;
+  progress: number;
+  age_seconds: number | null;
+  latest_timestamp: string | null;
+  latest_reading_id: number | null;
+  stale_after_seconds: number;
+  offline_after_seconds: number;
+  firmware_publish_interval_seconds: number;
+  sensor_errors: string[];
+  calibration: Record<string, string>;
+  per_parameter: Record<
+    string,
+    {
+      label: string;
+      min: number;
+      max: number;
+      median: number;
+      range: number;
+      tolerance: number;
+      stable: boolean;
+    }
+  >;
+}
+
+export interface ProductReadingAssessment {
+  parameter: string;
+  label: string;
+  value: number | null;
+  unit: string;
+  status: ParameterStatus;
+  status_label: string;
+  reference: string;
+  note?: string | null;
+}
+
+export interface ProductOverallAssessment {
+  status: OverallStatus;
+  label: string;
+  summary: string;
+  reasons: string[];
+  reason_details?: ProductReasonDetail[];
+}
+
+export interface ProductAttentionItem {
+  parameter: string;
+  label: string;
+  value: number | null;
+  unit: string;
+  status: ParameterStatus;
+  status_label: string;
+  message: string;
+}
+
+export interface ProductSuitabilityCriterion {
+  parameter: string;
+  label: string;
+  value: number | null;
+  unit: string;
+  status: ParameterStatus;
+  status_label: string;
+  reference: string;
+  note?: string | null;
+}
+
+export interface ProductSuitability {
+  use: IntendedUseCode;
+  use_label: string;
+  description: string;
+  standard_code: string;
+  standard: string;
+  criteria_version: string;
+  result: OverallStatus;
+  result_label: string;
+  summary: string;
+  criteria_available: boolean;
+  criteria: ProductSuitabilityCriterion[];
+  limitations: string[];
+  reference_profile?: Record<string, unknown>;
+}
+
+export interface ProductDataQuality {
+  demo_mode: boolean;
+  reading_mode: ReadingMode;
+  freshness: "fresh" | "stale" | "simulated";
+  age_seconds: number | null;
+  calibration_status: "calibrated" | "provisional" | "simulated" | "unknown";
+  calibration_verified: boolean;
+  stability: ProductStabilityAssessment | null;
+  errors: string[];
+  warnings: string[];
+}
+
+export interface ProductPrediction {
+  available: boolean;
+  message: string;
+  model_version: string | null;
+  horizon_minutes: number | null;
+}
+
+export interface ProductTestAssessment {
+  criteria_version: string;
+  intended_use: IntendedUseCode;
+  intended_use_label: string;
+  reading_mode: ReadingMode;
+  reading_timestamp: string | null;
+  readings: {
+    ph: ProductReadingAssessment;
+    tds: ProductReadingAssessment;
+    turbidity: ProductReadingAssessment;
+    temperature: ProductReadingAssessment;
+  };
+  overall: ProductOverallAssessment;
+  attention: ProductAttentionItem[];
+  suitability: ProductSuitability;
+  data_quality: ProductDataQuality;
+  next_steps: string[];
+  prediction: ProductPrediction;
+  reference_profile?: Record<string, unknown>;
+}
+
+export interface ProductWaterTest {
+  id: number;
+  test_code: string;
+  water_source: WaterSourceCode;
+  water_source_label: string;
+  intended_use: IntendedUseCode;
+  intended_use_label: string;
+  reading_mode: ReadingMode;
+  reading_source: string;
+  device_id: string;
+  device_name: string;
+  ph: number | null;
+  tds: number | null;
+  turbidity: number | null;
+  turbidity_unit: string | null;
+  turbidity_index?: number | null;
+  temperature: number | null;
+  reading_timestamp: string | null;
+  created_at: string;
+  overall_status: OverallStatus;
+  overall_label: string;
+  criteria_version: string;
+  assessment: ProductTestAssessment;
+}
+
+export interface ProductWaterTestSummary {
+  id: number;
+  test_code: string;
+  water_source: WaterSourceCode;
+  water_source_label: string;
+  intended_use: IntendedUseCode;
+  intended_use_label: string;
+  reading_mode: ReadingMode;
+  overall_status: OverallStatus;
+  overall_label: string;
+  ph: number | null;
+  tds: number | null;
+  turbidity: number | null;
+  turbidity_unit: string | null;
+  turbidity_index?: number | null;
+  temperature: number | null;
+  reading_timestamp: string | null;
+  created_at: string;
+}
+
+export interface ProductWaterTestList {
+  total: number;
+  items: ProductWaterTestSummary[];
+}
+
+export interface ProductDeviceReading {
+  ph: number | null;
+  turbidity: number | null;
+  turbidity_unit: string | null;
+  turbidity_index?: number | null;
+  turbidity_status: string | null;
+  tds: number | null;
+  temperature: number | null;
+  timestamp: string;
+  source: string;
+  calibration: Record<string, string>;
+}
+
+export interface ProductDeviceStatus {
+  device_id: string;
+  device_name: string;
+  product_code: string;
+  status: string;
+  connected: boolean;
+  last_seen: string | null;
+  reading_age_seconds: number | null;
+  reading: ProductDeviceReading | null;
+  note: string;
+}
+
+export interface ProductOverview {
+  total_tests: number;
+  latest_test: ProductWaterTestSummary | null;
+  recent_tests: ProductWaterTestSummary[];
+  device: ProductDeviceStatus | null;
+}
+
+/** One danger-level alert derived from a real reading or a saved test. */
+export interface ProductAlertItem {
+  parameter: string;
+  label: string;
+  value: number | null;
+  unit: string;
+  severity: "critical" | "warning";
+  title: string;
+  message: string;
+  reference: string;
+  next_step: string;
+  timestamp: string;
+  source: string;
+  simulated: boolean;
+  test_id?: number | null;
+  intended_use?: string;
+}
+
+export interface ProductAlertList {
+  total: number;
+  items: ProductAlertItem[];
+  critical_count: number;
+  warning_count: number;
+}
+
+export type SimulationScenario =
+  | "normal"
+  | "gradual_deterioration"
+  | "sudden_change"
+  | "sensor_fault";
+
+export interface SimulationSample {
+  id: number;
+  station_code: string;
+  source_code: string | null;
+  timestamp: string;
+  scenario: string;
+  step: number;
+  ph: number | null;
+  tds: number | null;
+  temperature: number | null;
+  turbidity_index: number | null;
+  turbidity_status: string | null;
+  fault_sensor: string | null;
+  source: "simulator";
+  simulated: true;
+}
+
+export interface SimulationState {
+  running: boolean;
+  station_code: string | null;
+  source_code: string | null;
+  scenario: SimulationScenario | string;
+  seed: number | null;
+  interval_seconds: number;
+  step: number;
+  samples_generated: number;
+  started_at: string | null;
+  last_sample_at: string | null;
+  simulated: true;
+  label: string;
+  scenarios: string[];
+  recent_samples: SimulationSample[];
+}
+
+export interface LiveLatestReading {
+  reading_id: number | null;
+  timestamp: string | null;
+  ph: number | null;
+  tds: number | null;
+  turbidity: number | null;
+  turbidity_unit: string | null;
+  turbidity_index?: number | null;
+  turbidity_status: string | null;
+  temperature: number | null;
+  source: string | null;
+}
+
+export interface LiveAssessmentResponse {
+  station_code: string;
+  station_name: string;
+  water_source_name: string;
+  device_id: string | null;
+  device_name: string;
+  connection: "connected" | "connecting" | "offline" | "error" | "no_data";
+  connection_label: string;
+  last_received: string | null;
+  live: boolean;
+  poll_interval_seconds: number;
+  stability: ProductStabilityAssessment;
+  latest: LiveLatestReading | null;
+  assessment: ProductTestAssessment;
+  test_id: string | null;
+  assessment_id: number | null;
+  assessment_persisted: boolean;
+  criteria_version: string;
 }
 
 export interface WaterSourceResponse {
@@ -233,6 +615,7 @@ export interface ReadingAnalysisResponse {
   turbidity: number | null;
   /** "relative_index_0_100" (ESP32 index — NOT NTU) | "ntu" | null (unknown). */
   turbidity_unit?: string | null;
+  turbidity_index?: number | null;
   /** CLEARER / MODERATE / CLOUDIER for relative-index rows. */
   turbidity_status?: string | null;
   tds: number | null;
@@ -255,6 +638,7 @@ export interface LatestReading {
   /** "relative_index_0_100" = ESP32 provisional index (NOT NTU),
    * "ntu" = simulated NTU-style value, null = unit unknown. */
   turbidity_unit?: string | null;
+  turbidity_index?: number | null;
   /** Firmware band for relative-index rows: CLEARER / MODERATE / CLOUDIER. */
   turbidity_status?: string | null;
   tds: number | null;
@@ -276,12 +660,191 @@ export interface StationReading {
   pH: number | null;
   turbidity: number | null;
   turbidity_unit?: string | null;
+  turbidity_index?: number | null;
   turbidity_status?: string | null;
   tds: number | null;
   temperature: number | null;
   source: string;
   diagnostics: DeviceDiagnostics | null;
   created_at: string;
+}
+
+/**
+ * One model entry from GET /authority/ml/status — public metadata only
+ * (file NAME, role, feature contract, load state), never filesystem paths.
+ */
+export interface MLModelStatus {
+  key: string;
+  name: string;
+  role: string;
+  file: string;
+  features: string[];
+  live_inference: boolean;
+  artifact_present: boolean;
+  loaded: boolean;
+}
+
+/** Classification metrics computed by ml/scripts/build_evaluation_report.py. */
+export interface MLEvaluationMetrics {
+  n_samples?: number;
+  accuracy?: number;
+  balanced_accuracy?: number;
+  precision_macro?: number;
+  recall_macro?: number;
+  f1_macro?: number;
+  f1_weighted?: number;
+  roc_auc_unsafe?: number;
+  confusion_matrix?: {
+    labels: string[];
+    matrix: number[][];
+    row_semantics: string;
+  };
+  [key: string]: unknown;
+}
+
+/**
+ * Machine-readable evaluation report (ml/reports/evaluation_report.json).
+ * Every metric is computed from saved repository artifacts at report time —
+ * none are hardcoded. Absent sections are simply missing; they are never
+ * filled with placeholder numbers.
+ */
+export interface MLEvaluationReport {
+  schema_version: string;
+  generated_at: string;
+  generator: string;
+  environment?: Record<string, string>;
+  honesty_policy: string;
+  random_forest?: {
+    available: boolean;
+    task: string;
+    live_inference: boolean;
+    dataset?: { n_test_samples?: number; [key: string]: unknown };
+    metrics?: MLEvaluationMetrics;
+    [key: string]: unknown;
+  };
+  isolation_forest?: {
+    available: boolean;
+    task: string;
+    live_inference: boolean;
+    dataset?: { n_scored_readings?: number; note?: string; [key: string]: unknown };
+    summary?: {
+      anomalies_flagged?: number;
+      anomaly_rate?: number;
+      score_min?: number;
+      score_max?: number;
+      score_mean?: number;
+      [key: string]: unknown;
+    };
+    [key: string]: unknown;
+  };
+  limitations?: string[];
+  [key: string]: unknown;
+}
+
+// ============= Water Suitability Assessment =============
+
+export type SuitabilityParameterStatus =
+  | "within_acceptable"
+  | "within_permissible"
+  | "outside_limits"
+  | "not_measured"
+  | "not_comparable";
+
+export type SuitabilityResultCode =
+  | "preliminary_suitable"
+  | "treatment_required"
+  | "outside_limits"
+  | "lab_confirmation_required"
+  | "insufficient_data";
+
+export interface SuitabilityParameter {
+  parameter: string;
+  label: string;
+  unit: string;
+  value: number | null;
+  status: SuitabilityParameterStatus;
+  status_label: string;
+  reference: string;
+  critical: boolean;
+  note?: string | null;
+}
+
+export interface SuitabilityMissingParameter {
+  parameter: string;
+  label: string;
+  why: string;
+  required_by: string;
+}
+
+export interface SuitabilityMeasuredValue {
+  parameter: string;
+  label: string;
+  value: number;
+  unit: string;
+  source: string;
+}
+
+export interface SuitabilityDataQuality {
+  freshness: "fresh" | "delayed" | "stale" | "no_data";
+  age_seconds: number | null;
+  reading_id: number | null;
+  reading_timestamp: string | null;
+  device_source: string | null;
+  comparable_parameters: string[];
+  excluded_parameters: { parameter: string; reason?: string | null }[];
+}
+
+export interface WaterSuitabilityAssessment {
+  use: string;
+  use_label: string;
+  description: string;
+  standard_code: string;
+  standard: string;
+  ruleset_version: string;
+  result: SuitabilityResultCode;
+  result_label: string;
+  summary: string;
+  parameters: SuitabilityParameter[];
+  missing_parameters: SuitabilityMissingParameter[];
+  measured_values: SuitabilityMeasuredValue[];
+  limitations: string[];
+  data_quality: SuitabilityDataQuality;
+}
+
+/** GET /{authority|public}/stations/{code}/suitability */
+export interface StationSuitabilityResponse {
+  station_code: string;
+  station_name: string;
+  generated_at: string;
+  ruleset_version: string;
+  assessments: WaterSuitabilityAssessment[];
+}
+
+/** Public-safe latest reading for the QR water-body page. */
+export interface PublicLatestReading {
+  station_code: string;
+  timestamp: string;
+  pH: number | null;
+  turbidity: number | null;
+  turbidity_unit: string | null;
+  turbidity_index?: number | null;
+  turbidity_status: string | null;
+  tds: number | null;
+  temperature: number | null;
+  source: string;
+}
+
+export interface PublicReadingHistoryRow extends PublicLatestReading {
+  id: number;
+}
+
+/** GET /authority/ml/status — model health + evaluation report (authority-only). */
+export interface MLStatusResponse {
+  models: MLModelStatus[];
+  evaluation_available: boolean;
+  evaluation: MLEvaluationReport | null;
+  report: string | null;
+  generated_at: string | null;
 }
 
 export interface MonitoringStation {
@@ -304,6 +867,22 @@ export interface MonitoringStation {
 export const publicApi = {
   getStationByCode: (stationCode: string) =>
     apiGet<MonitoringStation>(`/public/stations/${stationCode}`),
+
+  /** Latest public-safe reading for a station (QR water-body page). */
+  getLatestReading: (stationCode: string) =>
+    apiGet<PublicLatestReading>(`/public/stations/${stationCode}/readings/latest`),
+
+  /** Recent public-safe readings, newest first. */
+  getReadingHistory: (stationCode: string, limit = 50) =>
+    apiGet<PublicReadingHistoryRow[]>(
+      `/public/stations/${stationCode}/readings?limit=${limit}`
+    ),
+
+  /** Standards-based suitability assessment (public, no login required). */
+  getSuitability: (stationCode: string) =>
+    apiGet<StationSuitabilityResponse>(
+      `/public/stations/${stationCode}/suitability`
+    ),
 };
 
 // Auth API (no auth required)
@@ -322,6 +901,87 @@ export const productApi = {
 
   getDevices: (token: string) =>
     apiGetAuth<ProductDevice[]>("/product/devices", token),
+
+  getOverview: (token: string) =>
+    apiGetAuth<ProductOverview>("/product/overview", token),
+
+  getDeviceStatus: (token: string) =>
+    apiGetAuth<ProductDeviceStatus>("/product/device-status", token),
+
+  activateProduct: (productCode: string, token: string) =>
+    apiPostAuth<{
+      id: number;
+      product_code: string;
+      device_id: string;
+      device_name: string;
+      status: string;
+    }>("/product/activate", { product_code: productCode }, token),
+
+  startTest: (
+    data: {
+      water_source: WaterSourceCode;
+      intended_use: IntendedUseCode;
+      reading_mode: ReadingMode;
+      aquaculture_context?: string;
+    },
+    token: string
+  ) => apiPostAuth<ProductWaterTest>("/product/tests", data, token),
+
+  getTests: (
+    token: string,
+    options: { limit?: number; dateFrom?: string; dateTo?: string } = {}
+  ) => {
+    const params = new URLSearchParams();
+    if (options.limit) params.set("limit", String(options.limit));
+    if (options.dateFrom) params.set("date_from", options.dateFrom);
+    if (options.dateTo) params.set("date_to", options.dateTo);
+    const query = params.toString();
+    return apiGetAuth<ProductWaterTestList>(
+      `/product/tests${query ? `?${query}` : ""}`,
+      token
+    );
+  },
+
+  getTest: (testId: number, token: string) =>
+    apiGetAuth<ProductWaterTest>(`/product/tests/${testId}`, token),
+
+  /**
+   * Danger-level alerts for this account's water: derived from the latest
+   * live reading of the user's own device plus their recent saved tests.
+   * Nothing is invented — each entry carries the measured value, the
+   * configured reference and whether the source was live or simulated.
+   */
+  getAlerts: (token: string, limit = 20) =>
+    apiGetAuth<ProductAlertList>(`/product/alerts?limit=${limit}`, token),
+};
+
+// Simulation API (requires AUTHORITY JWT) — clearly labelled SIMULATED data
+export const simulationApi = {
+  getState: (token: string) =>
+    apiGetAuth<SimulationState>("/simulation/state", token),
+
+  start: (
+    data: {
+      station_code: string;
+      scenario: SimulationScenario;
+      seed?: number | null;
+      interval_seconds?: number;
+    },
+    token: string
+  ) => apiPostAuth<SimulationState>("/simulation/start", data, token),
+
+  pause: (token: string) =>
+    apiPostAuth<SimulationState>("/simulation/pause", {}, token),
+
+  generate: (
+    data: {
+      station_code?: string;
+      scenario: SimulationScenario;
+      seed?: number | null;
+      count?: number;
+    },
+    token: string
+  ) => apiPostAuth<SimulationState>("/simulation/generate", data, token),
 };
 
 // Authority API (requires AUTHORITY JWT)
@@ -359,6 +1019,32 @@ export const authorityApi = {
       `/authority/stations/${stationCode}/readings?limit=${limit}`,
       token
     ),
+
+  /** Model health + evaluation report (authority-only, read-only). */
+  getMlStatus: (token: string) =>
+    apiGetAuth<MLStatusResponse>("/authority/ml/status", token),
+
+  /** Standards-based suitability screening for the latest station reading. */
+  getStationSuitability: (stationCode: string, token: string) =>
+    apiGetAuth<StationSuitabilityResponse>(
+      `/authority/stations/${stationCode}/suitability`,
+      token
+    ),
+
+  /** Stable-reading live assessment for the selected intended use. */
+  getLiveAssessment: (
+    stationCode: string,
+    token: string,
+    use: IntendedUseCode = "drinking",
+    aquacultureContext?: string
+  ) => {
+    const params = new URLSearchParams({ use });
+    if (aquacultureContext) params.set("aquaculture_context", aquacultureContext);
+    return apiGetAuth<LiveAssessmentResponse>(
+      `/authority/stations/${stationCode}/live-assessment?${params.toString()}`,
+      token
+    );
+  },
 };
 
 /**

@@ -1,5 +1,6 @@
 import { NavLink, Link } from "react-router-dom";
 import Logo from "../shared/Logo";
+import { mockSensorProbes } from "../../data/mockData";
 import { 
   LayoutDashboard, 
   Droplets, 
@@ -24,6 +25,7 @@ export default function AuthoritySidebar({ isOpen, onClose }: AuthoritySidebarPr
     { to: "/authority", label: "Command Center", icon: LayoutDashboard, end: true },
     { to: "/authority/sources", label: "Water Sources", icon: Droplets },
     { to: "/authority/monitoring", label: "Live Monitoring", icon: Activity },
+    { to: "/authority/simulation", label: "Simulation", icon: FlaskConical },
     { to: "/authority/alerts", label: "Alerts", icon: ShieldAlert, badge: "3" },
     { to: "/authority/incidents", label: "Incidents", icon: Flame },
     { to: "/authority/inspections", label: "Inspections", icon: ClipboardCheck },
@@ -128,7 +130,7 @@ export default function AuthoritySidebar({ isOpen, onClose }: AuthoritySidebarPr
               <span>Monitoring system online</span>
             </div>
             <p className="mt-1 text-[10px] text-slate-500 font-medium">
-              Mesh Telemetry Synced • 5 Probes
+              Mesh Telemetry Synced • {mockSensorProbes.length} Probes
             </p>
           </div>
         </div>

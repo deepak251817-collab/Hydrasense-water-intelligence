@@ -1,0 +1,672 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-10-24T01:35:42.376277+00:00",
+  "generator": "ml/preprocessing/clean_datasets.py",
+  "policy": "Sources are read-only; cleaned copies are written to ml/data/processed/cleaned/. Only row removal, timestamp normalization, column renaming and dropping of all-NULL columns are performed - no imputation, scaling, clipping or unit conversion.",
+  "totals": {
+    "input_rows": 140809,
+    "output_rows": 140809,
+    "rows_removed": 0,
+    "all_checks_passed": true
+  },
+  "datasets": [
+    {
+      "source_file": "ml\\data\\external\\usgs_conductance_2024.csv",
+      "output_file": "ml\\data\\processed\\cleaned\\cleaned_usgs_conductance_2024.csv",
+      "recipe": "usgs_long",
+      "source_sha256_before": "c52a299fb6ff96d148ffa21dfceeb570d81ecb5567e8d05c68838434f0ee0e43",
+      "source_sha256_after": "c52a299fb6ff96d148ffa21dfceeb570d81ecb5567e8d05c68838434f0ee0e43",
+      "source_unmodified": true,
+      "input_rows": 10000,
+      "output_rows": 10000,
+      "rows_removed_total": 0,
+      "output_columns": [
+        "monitoring_location_id",
+        "parameter_code",
+        "time",
+        "value",
+        "unit_of_measure",
+        "approval_status"
+      ],
+      "output_sha256": "b5cf9bb1ea2523399e7c8a2c5ae090cd1dcb2b5c4b870af1891f0ddf1e702aaf",
+      "operations": [
+        {
+          "operation": "parse `time` to UTC datetime; drop unparseable timestamps",
+          "rows_before": 10000,
+          "rows_after": 10000,
+          "rows_removed": 0
+        },
+        {
+          "operation": "coerce `value` to numeric; drop non-numeric values",
+          "rows_before": 10000,
+          "rows_after": 10000,
+          "rows_removed": 0
+        },
+        {
+          "operation": "drop columns that are entirely NULL",
+          "columns_dropped": [
+            "qualifier"
+          ],
+          "rows_before": 10000,
+          "rows_after": 10000,
+          "rows_removed": 0
+        },
+        {
+          "operation": "remove physically impossible values (per-parameter bounds)",
+          "rows_before": 10000,
+          "rows_after": 10000,
+          "rows_removed": 0,
+          "bounds": {
+            "95": [
+              0.0,
+              200000.0
+            ]
+          }
+        },
+        {
+          "operation": "drop duplicate (time_series_id, time) rows, keep first",
+          "rows_before": 10000,
+          "rows_after": 10000,
+          "rows_removed": 0
+        },
+        {
+          "operation": "sort chronologically by `time`",
+          "rows_before": 10000,
+          "rows_after": 10000,
+          "rows_removed": 0
+        },
+        {
+          "operation": "select canonical columns",
+          "columns_kept": [
+            "monitoring_location_id",
+            "parameter_code",
+            "time",
+            "value",
+            "unit_of_measure",
+            "approval_status"
+          ],
+          "columns_removed": [
+            "x",
+            "y",
+            "time_series_id",
+            "statistic_id",
+            "last_modified"
+          ],
+          "rows_before": 10000,
+          "rows_after": 10000,
+          "rows_removed": 0
+        }
+      ],
+      "checks": [
+        {
+          "check": "parameter_code 95 has a documented physical range",
+          "passed": true,
+          "detail": "specific conductance, uS/cm: [0.0, 200000.0]"
+        },
+        {
+          "check": "no NULL values in key/value columns",
+          "passed": true,
+          "detail": "none"
+        },
+        {
+          "check": "timestamps are non-decreasing",
+          "passed": true,
+          "detail": true
+        },
+        {
+          "check": "units are consistent inside the file",
+          "passed": true,
+          "detail": [
+            "uS/cm"
+          ]
+        }
+      ],
+      "verification": {
+        "row_count_reconciled": true,
+        "output_is_row_subset_of_input": true,
+        "subset_detail": "key columns not comparable after normalization"
+      },
+      "label_distribution": null
+    },
+    {
+      "source_file": "ml\\data\\external\\usgs_ph_2024.csv",
+      "output_file": "ml\\data\\processed\\cleaned\\cleaned_usgs_ph_2024.csv",
+      "recipe": "usgs_long",
+      "source_sha256_before": "fbb14c820cc51847e130285c37e470b27cb916dbdc4f6c3f8083139bb813823a",
+      "source_sha256_after": "fbb14c820cc51847e130285c37e470b27cb916dbdc4f6c3f8083139bb813823a",
+      "source_unmodified": true,
+      "input_rows": 10000,
+      "output_rows": 10000,
+      "rows_removed_total": 0,
+      "output_columns": [
+        "monitoring_location_id",
+        "parameter_code",
+        "time",
+        "value",
+        "unit_of_measure",
+        "approval_status"
+      ],
+      "output_sha256": "bbfec49c9fe0c18392bd724216d032cd84d6a4afa712c2fceee5ffe273ee3fe9",
+      "operations": [
+        {
+          "operation": "parse `time` to UTC datetime; drop unparseable timestamps",
+          "rows_before": 10000,
+          "rows_after": 10000,
+          "rows_removed": 0
+        },
+        {
+          "operation": "coerce `value` to numeric; drop non-numeric values",
+          "rows_before": 10000,
+          "rows_after": 10000,
+          "rows_removed": 0
+        },
+        {
+          "operation": "drop columns that are entirely NULL",
+          "columns_dropped": [
+            "qualifier"
+          ],
+          "rows_before": 10000,
+          "rows_after": 10000,
+          "rows_removed": 0
+        },
+        {
+          "operation": "remove physically impossible values (per-parameter bounds)",
+          "rows_before": 10000,
+          "rows_after": 10000,
+          "rows_removed": 0,
+          "bounds": {
+            "400": [
+              0.0,
+              14.0
+            ]
+          }
+        },
+        {
+          "operation": "drop duplicate (time_series_id, time) rows, keep first",
+          "rows_before": 10000,
+          "rows_after": 10000,
+          "rows_removed": 0
+        },
+        {
+          "operation": "sort chronologically by `time`",
+          "rows_before": 10000,
+          "rows_after": 10000,
+          "rows_removed": 0
+        },
+        {
+          "operation": "select canonical columns",
+          "columns_kept": [
+            "monitoring_location_id",
+            "parameter_code",
+            "time",
+            "value",
+            "unit_of_measure",
+            "approval_status"
+          ],
+          "columns_removed": [
+            "x",
+            "y",
+            "time_series_id",
+            "statistic_id",
+            "last_modified"
+          ],
+          "rows_before": 10000,
+          "rows_after": 10000,
+          "rows_removed": 0
+        }
+      ],
+      "checks": [
+        {
+          "check": "parameter_code 400 has a documented physical range",
+          "passed": true,
+          "detail": "pH, pH units: [0.0, 14.0]"
+        },
+        {
+          "check": "no NULL values in key/value columns",
+          "passed": true,
+          "detail": "none"
+        },
+        {
+          "check": "timestamps are non-decreasing",
+          "passed": true,
+          "detail": true
+        },
+        {
+          "check": "units are consistent inside the file",
+          "passed": true,
+          "detail": [
+            "pH Units"
+          ]
+        }
+      ],
+      "verification": {
+        "row_count_reconciled": true,
+        "output_is_row_subset_of_input": true,
+        "subset_detail": "key columns not comparable after normalization"
+      },
+      "label_distribution": null
+    },
+    {
+      "source_file": "ml\\data\\external\\usgs_temperature_2024.csv",
+      "output_file": "ml\\data\\processed\\cleaned\\cleaned_usgs_temperature_2024.csv",
+      "recipe": "usgs_long",
+      "source_sha256_before": "84c0504d4f83c776e98d33bd82a54d5cdcf667deed7a44eee51094026abd1405",
+      "source_sha256_after": "84c0504d4f83c776e98d33bd82a54d5cdcf667deed7a44eee51094026abd1405",
+      "source_unmodified": true,
+      "input_rows": 10000,
+      "output_rows": 10000,
+      "rows_removed_total": 0,
+      "output_columns": [
+        "monitoring_location_id",
+        "parameter_code",
+        "time",
+        "value",
+        "unit_of_measure",
+        "approval_status"
+      ],
+      "output_sha256": "658fb00ff1ef8a8c0adc37c1310de21b96bafb278d24e9275344a1a6e269c2d1",
+      "operations": [
+        {
+          "operation": "parse `time` to UTC datetime; drop unparseable timestamps",
+          "rows_before": 10000,
+          "rows_after": 10000,
+          "rows_removed": 0
+        },
+        {
+          "operation": "coerce `value` to numeric; drop non-numeric values",
+          "rows_before": 10000,
+          "rows_after": 10000,
+          "rows_removed": 0
+        },
+        {
+          "operation": "drop columns that are entirely NULL",
+          "columns_dropped": [
+            "qualifier"
+          ],
+          "rows_before": 10000,
+          "rows_after": 10000,
+          "rows_removed": 0
+        },
+        {
+          "operation": "remove physically impossible values (per-parameter bounds)",
+          "rows_before": 10000,
+          "rows_after": 10000,
+          "rows_removed": 0,
+          "bounds": {
+            "10": [
+              -5.0,
+              50.0
+            ]
+          }
+        },
+        {
+          "operation": "drop duplicate (time_series_id, time) rows, keep first",
+          "rows_before": 10000,
+          "rows_after": 10000,
+          "rows_removed": 0
+        },
+        {
+          "operation": "sort chronologically by `time`",
+          "rows_before": 10000,
+          "rows_after": 10000,
+          "rows_removed": 0
+        },
+        {
+          "operation": "select canonical columns",
+          "columns_kept": [
+            "monitoring_location_id",
+            "parameter_code",
+            "time",
+            "value",
+            "unit_of_measure",
+            "approval_status"
+          ],
+          "columns_removed": [
+            "x",
+            "y",
+            "time_series_id",
+            "statistic_id",
+            "last_modified"
+          ],
+          "rows_before": 10000,
+          "rows_after": 10000,
+          "rows_removed": 0
+        }
+      ],
+      "checks": [
+        {
+          "check": "parameter_code 10 has a documented physical range",
+          "passed": true,
+          "detail": "temperature, degC: [-5.0, 50.0]"
+        },
+        {
+          "check": "no NULL values in key/value columns",
+          "passed": true,
+          "detail": "none"
+        },
+        {
+          "check": "timestamps are non-decreasing",
+          "passed": true,
+          "detail": true
+        },
+        {
+          "check": "units are consistent inside the file",
+          "passed": true,
+          "detail": [
+            "degC"
+          ]
+        }
+      ],
+      "verification": {
+        "row_count_reconciled": true,
+        "output_is_row_subset_of_input": true,
+        "subset_detail": "key columns not comparable after normalization"
+      },
+      "label_distribution": null
+    },
+    {
+      "source_file": "ml\\data\\external\\usgs_turbidity_2024.csv",
+      "output_file": "ml\\data\\processed\\cleaned\\cleaned_usgs_turbidity_2024.csv",
+      "recipe": "usgs_long",
+      "source_sha256_before": "9b3e9785dbc2d58befd796254818a74a5d424b388be0d66bbc130a21f37478e4",
+      "source_sha256_after": "9b3e9785dbc2d58befd796254818a74a5d424b388be0d66bbc130a21f37478e4",
+      "source_unmodified": true,
+      "input_rows": 10000,
+      "output_rows": 10000,
+      "rows_removed_total": 0,
+      "output_columns": [
+        "monitoring_location_id",
+        "parameter_code",
+        "time",
+        "value",
+        "unit_of_measure",
+        "approval_status"
+      ],
+      "output_sha256": "6fae6583ff41d2416fccaa674f9c1f250e1baf6fb88692ff3927d5c26c46773d",
+      "operations": [
+        {
+          "operation": "parse `time` to UTC datetime; drop unparseable timestamps",
+          "rows_before": 10000,
+          "rows_after": 10000,
+          "rows_removed": 0
+        },
+        {
+          "operation": "coerce `value` to numeric; drop non-numeric values",
+          "rows_before": 10000,
+          "rows_after": 10000,
+          "rows_removed": 0
+        },
+        {
+          "operation": "drop columns that are entirely NULL",
+          "columns_dropped": [
+            "qualifier"
+          ],
+          "rows_before": 10000,
+          "rows_after": 10000,
+          "rows_removed": 0
+        },
+        {
+          "operation": "remove physically impossible values (per-parameter bounds)",
+          "rows_before": 10000,
+          "rows_after": 10000,
+          "rows_removed": 0,
+          "bounds": {
+            "63680": [
+              0.0,
+              100000.0
+            ]
+          }
+        },
+        {
+          "operation": "drop duplicate (time_series_id, time) rows, keep first",
+          "rows_before": 10000,
+          "rows_after": 10000,
+          "rows_removed": 0
+        },
+        {
+          "operation": "sort chronologically by `time`",
+          "rows_before": 10000,
+          "rows_after": 10000,
+          "rows_removed": 0
+        },
+        {
+          "operation": "select canonical columns",
+          "columns_kept": [
+            "monitoring_location_id",
+            "parameter_code",
+            "time",
+            "value",
+            "unit_of_measure",
+            "approval_status"
+          ],
+          "columns_removed": [
+            "x",
+            "y",
+            "time_series_id",
+            "statistic_id",
+            "last_modified"
+          ],
+          "rows_before": 10000,
+          "rows_after": 10000,
+          "rows_removed": 0
+        }
+      ],
+      "checks": [
+        {
+          "check": "parameter_code 63680 has a documented physical range",
+          "passed": true,
+          "detail": "turbidity, FNU: [0.0, 100000.0]"
+        },
+        {
+          "check": "no NULL values in key/value columns",
+          "passed": true,
+          "detail": "none"
+        },
+        {
+          "check": "timestamps are non-decreasing",
+          "passed": true,
+          "detail": true
+        },
+        {
+          "check": "units are consistent inside the file",
+          "passed": true,
+          "detail": [
+            "_FNU"
+          ]
+        }
+      ],
+      "verification": {
+        "row_count_reconciled": true,
+        "output_is_row_subset_of_input": true,
+        "subset_detail": "key columns not comparable after normalization"
+      },
+      "label_distribution": null
+    },
+    {
+      "source_file": "ml\\data\\external\\water_quality_dataset1.csv",
+      "output_file": "ml\\data\\processed\\cleaned\\cleaned_water_quality_dataset1.csv",
+      "recipe": "benchmark",
+      "source_sha256_before": "90f9c7cb7404fb69b655ee27293c91b82ee3a346712e06035f8259393835a04a",
+      "source_sha256_after": "90f9c7cb7404fb69b655ee27293c91b82ee3a346712e06035f8259393835a04a",
+      "source_unmodified": true,
+      "input_rows": 100800,
+      "output_rows": 100800,
+      "rows_removed_total": 0,
+      "output_columns": [
+        "pH",
+        "tds",
+        "turbidity",
+        "temperature",
+        "label"
+      ],
+      "output_sha256": "4e75f625dba0e0915f0d3a37b9a93b2db2a23ec07a7fdb05fc78c9ca67b5fb56",
+      "operations": [
+        {
+          "operation": "rename columns to the pipeline's canonical names",
+          "rows_before": 100800,
+          "rows_after": 100800,
+          "rows_removed": 0,
+          "rename": {
+            "pH": "pH",
+            "TDS_ppm": "tds",
+            "Turbidity_NTU": "turbidity",
+            "Temperature_C": "temperature",
+            "Label": "label"
+          }
+        },
+        {
+          "operation": "coerce features to numeric; drop rows with NULL features/label",
+          "rows_before": 100800,
+          "rows_after": 100800,
+          "rows_removed": 0
+        },
+        {
+          "operation": "remove physically impossible feature values",
+          "rows_before": 100800,
+          "rows_after": 100800,
+          "rows_removed": 0,
+          "bounds": {
+            "pH": [
+              0.0,
+              14.0
+            ],
+            "tds": [
+              0.0,
+              1000000.0
+            ],
+            "turbidity": [
+              0.0,
+              100000.0
+            ],
+            "temperature": [
+              -10.0,
+              60.0
+            ]
+          }
+        },
+        {
+          "operation": "keep only known labels (Safe / Unsafe)",
+          "rows_before": 100800,
+          "rows_after": 100800,
+          "rows_removed": 0,
+          "allowed_labels": [
+            "Safe",
+            "Unsafe"
+          ]
+        },
+        {
+          "operation": "drop fully duplicated rows",
+          "rows_before": 100800,
+          "rows_after": 100800,
+          "rows_removed": 0
+        }
+      ],
+      "checks": [
+        {
+          "check": "no NULL values remain",
+          "passed": true,
+          "detail": 0
+        },
+        {
+          "check": "labels stay inside the documented set",
+          "passed": true,
+          "detail": {
+            "Unsafe": 70560,
+            "Safe": 30240
+          }
+        },
+        {
+          "check": "all four model features present",
+          "passed": true,
+          "detail": [
+            "pH",
+            "tds",
+            "turbidity",
+            "temperature",
+            "label"
+          ]
+        }
+      ],
+      "verification": {
+        "row_count_reconciled": true,
+        "output_is_row_subset_of_input": true,
+        "subset_detail": "100800 cleaned rows <= 100800 input rows"
+      },
+      "label_distribution": {
+        "Unsafe": 70560,
+        "Safe": 30240
+      }
+    },
+    {
+      "source_file": "ml\\data\\raw\\sensor_readings.csv",
+      "output_file": "ml\\data\\processed\\cleaned\\cleaned_sensor_readings.csv",
+      "recipe": "telemetry",
+      "source_sha256_before": "87ec9b4b0112d61d0ccf8985af604ef6f2495c92b0477f8bdcac321d11b89c2f",
+      "source_sha256_after": "87ec9b4b0112d61d0ccf8985af604ef6f2495c92b0477f8bdcac321d11b89c2f",
+      "source_unmodified": true,
+      "input_rows": 9,
+      "output_rows": 9,
+      "rows_removed_total": 0,
+      "output_columns": [
+        "station_code",
+        "device_id",
+        "timestamp",
+        "ph",
+        "turbidity",
+        "tds",
+        "temperature"
+      ],
+      "output_sha256": "3b3e4a065ed6f4576563709afba7b444012fa164510bcca0cc0dd799dbf1c05e",
+      "operations": [
+        {
+          "operation": "delegate to ml/preprocessing/clean_data.clean_sensor_data (UTC timestamps, station sort, dedupe on (station_code, timestamp), physical range validation)",
+          "rows_before": 9,
+          "rows_after": 9,
+          "rows_removed": 0,
+          "duplicates_removed": 0,
+          "invalid_rows_removed": 0
+        }
+      ],
+      "checks": [
+        {
+          "check": "no NULL sensor values remain",
+          "passed": true,
+          "detail": "none"
+        },
+        {
+          "check": "timestamps are ISO-8601 UTC strings",
+          "passed": true,
+          "detail": [
+            "2026-08-31T18:30:48Z"
+          ]
+        },
+        {
+          "check": "ph inside physical bounds",
+          "passed": true,
+          "detail": "[5.28, 7.33] within [0.0, 14.0]"
+        },
+        {
+          "check": "tds inside physical bounds",
+          "passed": true,
+          "detail": "[210.7, 1171.4] within [0.0, 1000000.0]"
+        },
+        {
+          "check": "turbidity inside physical bounds",
+          "passed": true,
+          "detail": "[3.13, 88.13] within [0.0, 100000.0]"
+        },
+        {
+          "check": "temperature inside physical bounds",
+          "passed": true,
+          "detail": "[25.9, 29.8] within [-10.0, 60.0]"
+        }
+      ],
+      "verification": {
+        "row_count_reconciled": true,
+        "output_is_row_subset_of_input": true,
+        "subset_detail": "0 output keys absent from input"
+      },
+      "label_distribution": null
+    }
+  ]
+}

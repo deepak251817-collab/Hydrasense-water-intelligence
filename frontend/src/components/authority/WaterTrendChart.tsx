@@ -15,7 +15,7 @@ interface WaterTrendChartProps {
   selectedSource: WaterSource;
 }
 
-type ParameterKey = "healthScore" | "turbidity" | "tds" | "dissolvedOxygen" | "pH";
+type ParameterKey = "healthScore" | "turbidity" | "tds" | "pH";
 
 interface ParameterConfig {
   key: ParameterKey;
@@ -64,8 +64,8 @@ export default function WaterTrendChart({ selectedSource }: WaterTrendChartProps
     },
     {
       key: "turbidity",
-      label: "Turbidity",
-      unit: " NTU",
+      label: "Turbidity Index (0–100, not NTU)",
+      unit: " / 100",
       color: "#06b6d4", // Cyan-500
       gradientId: "colorTurbidity",
     },
@@ -75,13 +75,6 @@ export default function WaterTrendChart({ selectedSource }: WaterTrendChartProps
       unit: " mg/L",
       color: "#6366f1", // Indigo-500
       gradientId: "colorTds",
-    },
-    {
-      key: "dissolvedOxygen",
-      label: "Dissolved O₂",
-      unit: " mg/L",
-      color: "#10b981", // Emerald-500
-      gradientId: "colorDo",
     },
     {
       key: "pH",

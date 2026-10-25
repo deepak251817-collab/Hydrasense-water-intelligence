@@ -5,12 +5,12 @@
 //     hydrasense/stations/<STATION_CODE>/telemetry
 // which the HydraSense backend (MQTT subscriber) ingests into sensor_readings.
 //
-// DEMO MODE: pH and TDS are voltage-based estimates. Turbidity is a LIVE
-// averaged reading from ADS1115 A2, published as a PROVISIONAL RELATIVE INDEX
-// (0-100, higher = cloudier) anchored to two sample-based reference voltages —
-// it is NOT NTU and NOT laboratory-calibrated. Raw ADC counts and voltages
-// remain in diagnostics. A disconnected DS18B20 still publishes null rather
-// than a fabricated temperature.
+// DEMO MODE: pH and TDS are provisional estimates, not lab-calibrated values.
+// Turbidity is a sensor-derived relative index (0-100), NOT NTU.
+// Invalid pH estimates are sent as null rather than being clamped to zero.
+// Raw ADC counts and voltages are printed and included in telemetry diagnostics.
+// A disconnected DS18B20
+// still publishes null rather than a fabricated temperature.
 //   * `source: "esp32"` marks every packet as physical hardware, so it stays
 //     distinguishable from the Python simulator's readings in the database.
 //
@@ -29,6 +29,9 @@
 // =============================================================================
 #include <WiFi.h>
 #include <time.h>
+#include <stdarg.h>
+#include <string.h>
+#include <math.h>
 #include <Wire.h>
 #include <PubSubClient.h>
 #include <OneWire.h>
@@ -50,6 +53,27 @@
 #define CH_TDS          1   // ADS1115 channel A1
 #define CH_TURBIDITY    2   // ADS1115 channel A2
 
+// TEMPORARY pH offset requested for demo use.
+// The previous reference (1.052 V) made the reported tap-water sample read 5.55.
+// With the existing 59.16 mV/pH slope, 1.1378 V shifts that same sample to ~pH 7.
+// This treats that tap-water voltage as pH 7 for display only; it is NOT a true
+// calibration. Replace with the measured voltage of a correctly prepared pH 7
+// calibration buffer, then perform multi-point calibration when possible.
+const float PH_VOLTAGE_AT_PH7 = 1.0278f;
+const float PH_VOLTS_PER_PH_UNIT = 0.05916f; // theoretical room-temperature slope
+
+// Relative turbidity index reference endpoints, using reconstructed SENSOR OUT
+// voltage (A2 voltage * 1.5 for the 10k/20k divider). Wider provisional span
+// avoids prematurely saturating the index for the previously observed values.
+// Adjust only after recording your own clear/cloudy sample readings.
+// These values are not NTU calibration and do not certify water safety.
+const float TURBIDITY_CLEAR_SENSOR_VOLTAGE = 0.400f;
+const float TURBIDITY_CLOUDY_SENSOR_VOLTAGE = 0.100f;
+const float TURBIDITY_R1_OHMS = 10000.0f;  // sensor OUT -> A2 junction
+const float TURBIDITY_R2_OHMS = 20000.0f;  // A2 junction -> GND
+#define TURBIDITY_SAMPLE_COUNT 10
+#define TURBIDITY_SAMPLE_DELAY_MS 20
+
 // Gain ±4.096 V full-scale (covers pH ~0–3.3 V, TDS ~0–2.4 V, and the
 // divider-scaled turbidity output). A gain only sets the MEASUREMENT range —
 // it does NOT make over-voltage safe: the absolute maximum input is
@@ -62,26 +86,6 @@
 #define MQTT_RETRY_MS   10000UL
 #define MQTT_BUF_SIZE   1024                     // PubSubClient default (256) is too small for diagnostics JSON
 #define VALID_EPOCH     1577836800L              // 2020-01-01T00:00:00Z — earlier = NTP not synced yet
-
-// ---- Provisional turbidity relative index (A2 live read) ------------------
-// Wiring: sensor OUT -> 10 kΩ -> A2 junction, A2 junction -> 20 kΩ -> GND,
-// so the sensor's output voltage is recovered as  A2 voltage × 1.5.
-// (Keep the divider: the 5 V sensor output must NEVER reach the ADS1115 directly.)
-//
-// The 0-100 index below maps between two PROVISIONAL SAMPLE-BASED reference
-// voltages measured from this build's sensor — they are NOT a laboratory
-// calibration and the index is deliberately NEVER labelled NTU:
-//   clear-water sensor output ≈ 0.354 V  -> index 0
-//   cloudy-water sensor output ≈ 0.273 V  -> index 100
-#define TURB_NUM_SAMPLES       10                 // averaged samples per reading
-#define TURB_SAMPLE_GAP_MS     20                 // spacing between samples
-#define TURB_DIVIDER_RATIO     1.5f               // sensor OUT = A2 volts × 1.5
-#define TURB_REF_CLEAR_V       0.354f             // provisional clear-water reference
-#define TURB_REF_CLOUDY_V      0.273f             // provisional cloudy-water reference
-// Provisional status bands on the relative index:
-//   CLEARER < 30 <= MODERATE < 55 <= CLOUDIER
-#define TURB_STATUS_CLEARER_MAX  30
-#define TURB_STATUS_MODERATE_MAX 55
 
 WiFiClient netClient;
 PubSubClient mqttClient(netClient);
@@ -107,28 +111,17 @@ size_t deviceErrorCount = 0;
 // function in the file, so anything defined later would not yet exist there.
 struct AnalogResult {
   int raw;
-  float voltage;
-  bool calibrated;     // retained for compatibility; demo values are not calibrated
-  bool hasValue;       // a demo estimate is available when ADS1115 is present
+  float voltage;       // physical voltage at the ADS1115 input
+  bool calibrated;     // false until proper sensor-specific calibration is done
+  bool hasValue;       // true only when a meaningful estimate is available
   float value;
+  const char* error;   // NULL when valid
 };
 
 struct TempResult {
   bool valid;
   float value;
   const char* error;   // NULL when valid
-};
-
-// Live turbidity read: averaged A2 counts, junction voltage, estimated sensor
-// output voltage, and the provisional 0-100 relative index + status band.
-struct TurbidityReading {
-  bool valid;            // false = no honest index (publishes null, never 0)
-  int  rawAvg;           // averaged raw ADC counts over TURB_NUM_SAMPLES
-  float a2Voltage;       // A2 junction voltage (V)
-  float sensorVoltage;   // estimated sensor output voltage (A2 × 1.5)
-  float index;           // provisional relative index 0-100 (higher = cloudier)
-  const char* status;    // "CLEARER" | "MODERATE" | "CLOUDIER" ("UNKNOWN" when invalid)
-  const char* error;     // NULL when valid, else why the index is absent
 };
 
 void pushError(const char* msg) {
@@ -182,69 +175,108 @@ float countsToVolts(int16_t counts) {
   return (float)counts * lsbVoltsForGain(ads.getGain());
 }
 
-// DEMO pH estimate: anchored to the user's observed pH-7 buffer voltage.
-// This theoretical-slope estimate is not a substitute for probe calibration.
+// Provisional pH estimate based on the current A0 voltage and one reference point.
+// If the estimated pH is outside 0..14, publish null + a diagnostic instead of
+// silently clamping it to 0 (which can hide a wrong calibration voltage).
 AnalogResult readPh() {
-  AnalogResult r;
-  r.raw = adsReadCounts(CH_PH);
-  r.voltage = countsToVolts((int16_t)r.raw);
+  AnalogResult r = {};
+  r.raw = 0;
+  r.voltage = 0.0f;
   r.calibrated = false;
-  r.hasValue = adsReady;
-  r.value = 7.0f - ((r.voltage - 1.052f) / 0.05916f);
-  if (r.value < 0.0f) r.value = 0.0f;
-  if (r.value > 14.0f) r.value = 14.0f;
-  if (!adsReady) { r.hasValue = false; r.value = 0.0f; }
+  r.hasValue = false;
+  r.value = 0.0f;
+  r.error = NULL;
+
+  if (!adsReady) {
+    r.error = "ads1115 unavailable";
+    return r;
+  }
+
+  long total = 0;
+  const int samples = 7;
+  for (int i = 0; i < samples; ++i) {
+    total += adsReadCounts(CH_PH);
+    delay(8);
+  }
+  r.raw = (int)(total / samples);
+  r.voltage = countsToVolts((int16_t)r.raw);
+
+  if (!isfinite(r.voltage) || r.voltage < 0.01f || r.voltage > 3.25f) {
+    r.error = "pH voltage out of expected range; check module power, A0 wiring and common GND";
+    return r;
+  }
+
+  const float estimate = 7.0f - ((r.voltage - PH_VOLTAGE_AT_PH7) / PH_VOLTS_PER_PH_UNIT);
+  if (!isfinite(estimate) || estimate < 0.0f || estimate > 14.0f) {
+    r.error = "pH estimate outside 0..14; check PH_VOLTAGE_AT_PH7 against a known pH 7 buffer";
+    return r;
+  }
+
+  r.hasValue = true;
+  r.value = estimate;
   return r;
 }
 
-// Live turbidity read from ADS1115 A2 through the existing voltage divider.
-// TURB_NUM_SAMPLES single-ended reads are averaged (~TURB_SAMPLE_GAP_MS apart)
-// to tame noise, then converted to a PROVISIONAL RELATIVE INDEX 0-100 using the
-// two sample-based reference voltages. This is NOT an NTU calibration: without
-// laboratory standards only a relative, clearly-labelled index is honest.
-// Missing ADS1115 -> valid=false (payload publishes null, never a fake 0).
-TurbidityReading readTurbidity() {
-  TurbidityReading r;
-  r.valid = false;
-  r.rawAvg = 0;
-  r.a2Voltage = 0.0f;
-  r.sensorVoltage = 0.0f;
-  r.index = 0.0f;
-  r.status = "UNKNOWN";
+// Relative status for station-specific demo references. This is not NTU and
+// is not a drinking-water safety determination.
+const char* getTurbidityStatus(float index) {
+  if (index < 30.0f) return "CLEARER";
+  if (index < 55.0f) return "MODERATE";
+  return "CLOUDIER";
+}
+
+float estimateTurbidityIndex(float sensorVoltage) {
+  const float span = TURBIDITY_CLEAR_SENSOR_VOLTAGE -
+                     TURBIDITY_CLOUDY_SENSOR_VOLTAGE;
+  if (!isfinite(sensorVoltage) || span <= 0.001f) return NAN;
+
+  float index = (TURBIDITY_CLEAR_SENSOR_VOLTAGE - sensorVoltage) *
+                100.0f / span;
+  if (index < 0.0f) index = 0.0f;
+  if (index > 100.0f) index = 100.0f;
+  return index;
+}
+
+AnalogResult readTurbidity() {
+  AnalogResult r = {};
+  r.raw = 0;
+  r.voltage = 0.0f;
+  r.calibrated = false;
+  r.hasValue = false;
+  r.value = 0.0f;
   r.error = NULL;
 
-  if (!adsReady) { r.error = "ads1115 unavailable"; return r; }   // no ADC -> no reading
-
-  long sum = 0;
-  for (int i = 0; i < TURB_NUM_SAMPLES; i++) {
-    sum += adsReadCounts(CH_TURBIDITY);
-    if (i < TURB_NUM_SAMPLES - 1) delay(TURB_SAMPLE_GAP_MS);
-  }
-  r.rawAvg = (int)(sum / TURB_NUM_SAMPLES);
-  r.a2Voltage = countsToVolts((int16_t)r.rawAvg);
-  r.sensorVoltage = r.a2Voltage * TURB_DIVIDER_RATIO;
-
-  // Relative index: clear ref -> 0, cloudy ref -> 100, linear in between,
-  // clamped to [0, 100]. Division-by-zero guard: identical reference
-  // voltages would make the scale meaningless — report invalid instead.
-  const float span = TURB_REF_CLEAR_V - TURB_REF_CLOUDY_V;   // +0.081 V nominal
-  if (span <= 0.0f) {
-    // Misconfigured references (clear <= cloudy): refuse to index rather than
-    // emit an inverted or NaN scale.
-    r.error = "invalid reference voltages (clear <= cloudy)";
-    pushError("turbidity: invalid reference voltages (clear <= cloudy)");
+  if (!adsReady) {
+    r.error = "ads1115 unavailable";
     return r;
   }
-  float idx = ((TURB_REF_CLEAR_V - r.sensorVoltage) / span) * 100.0f;
-  if (idx < 0.0f) idx = 0.0f;
-  if (idx > 100.0f) idx = 100.0f;
-  r.index = idx;
 
-  if      (r.index <  TURB_STATUS_CLEARER_MAX)  r.status = "CLEARER";
-  else if (r.index <  TURB_STATUS_MODERATE_MAX) r.status = "MODERATE";
-  else                                          r.status = "CLOUDIER";
+  long total = 0;
+  const int samples = TURBIDITY_SAMPLE_COUNT;
+  for (int i = 0; i < samples; ++i) {
+    total += adsReadCounts(CH_TURBIDITY);
+    delay(TURBIDITY_SAMPLE_DELAY_MS);
+  }
+  r.raw = (int)(total / samples);
+  r.voltage = countsToVolts((int16_t)r.raw);  // voltage at ADS1115 A2
 
-  r.valid = true;
+  // Reconstruct sensor OUT across the installed 10k/20k divider.
+  const float sensorOutputV = r.voltage *
+      (TURBIDITY_R1_OHMS + TURBIDITY_R2_OHMS) / TURBIDITY_R2_OHMS;
+
+  // Near-zero output usually means a disconnected sensor, bad ground, or no power.
+  // Do not turn that fault into a misleading turbidity index of 100.
+  if (!isfinite(sensorOutputV) || sensorOutputV < 0.02f || r.voltage > 3.25f) {
+    r.error = "turbidity voltage invalid; check sensor power, divider, A2 and common GND";
+    return r;
+  }
+
+  r.value = estimateTurbidityIndex(sensorOutputV);
+  if (!isfinite(r.value)) {
+    r.error = "turbidity index unavailable; check reference endpoint configuration";
+    return r;
+  }
+  r.hasValue = true;
   return r;
 }
 
@@ -256,13 +288,33 @@ float tdsConvert(float voltageV) {
 }
 
 AnalogResult readTds() {
-  AnalogResult r;
-  r.raw = adsReadCounts(CH_TDS);
-  r.voltage = countsToVolts((int16_t)r.raw);
+  AnalogResult r = {};
+  r.raw = 0;
+  r.voltage = 0.0f;
   r.calibrated = false;
-  r.hasValue = adsReady;
+  r.hasValue = false;
+  r.value = 0.0f;
+  r.error = NULL;
+
+  if (!adsReady) {
+    r.error = "ads1115 unavailable";
+    return r;
+  }
+
+  long total = 0;
+  const int samples = 7;
+  for (int i = 0; i < samples; ++i) {
+    total += adsReadCounts(CH_TDS);
+    delay(8);
+  }
+  r.raw = (int)(total / samples);
+  r.voltage = countsToVolts((int16_t)r.raw);
   r.value = tdsConvert(r.voltage);
-  if (!adsReady) { r.hasValue = false; r.value = 0.0f; }
+  if (!isfinite(r.voltage) || r.voltage < 0.0f || r.voltage > 3.25f || !isfinite(r.value)) {
+    r.error = "TDS voltage invalid; check sensor output and A1 wiring";
+    return r;
+  }
+  r.hasValue = true;
   return r;
 }
 
@@ -290,10 +342,17 @@ TempResult readTemperature() {
 // (the existing frontend SensorDiagnostics type already reads `error`).
 size_t appendAnalogDiag(char* buf, size_t pos, size_t cap,
                         const char* key, const AnalogResult& r) {
+  const char* calibrationStatus = r.hasValue ? "provisional_estimate" : "unavailable";
   pos = appendf(buf, pos, cap,
-                "\"%s\":{\"raw_adc\":%d,\"voltage_v\":%.3f,\"calibration_status\":\"%s\"",
-                key, r.raw, r.voltage, r.hasValue ? "demo_estimate" : "pending");
-  if (!adsReady) pos = appendf(buf, pos, cap, ",\"error\":\"ads1115 unavailable\"");
+                "\"%s\":{\"raw_adc\":%d,\"voltage_v\":%.3f,\"valid\":%s,\"calibration_status\":\"%s\"",
+                key, r.raw, r.voltage, r.hasValue ? "true" : "false", calibrationStatus);
+  if (strcmp(key, "turbidity") == 0 && r.hasValue) {
+    pos = appendf(buf, pos, cap,
+                  ",\"sensor_output_v\":%.3f,\"value_type\":\"relative_index_0_100\",\"classification\":\"%s\"",
+                  r.voltage * (TURBIDITY_R1_OHMS + TURBIDITY_R2_OHMS) / TURBIDITY_R2_OHMS,
+                  getTurbidityStatus(r.value));
+  }
+  if (r.error != NULL) pos = appendf(buf, pos, cap, ",\"error\":\"%s\"", r.error);
   return appendf(buf, pos, cap, "},");
 }
 
@@ -315,10 +374,40 @@ void publishTelemetry() {
   strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", &tmv);
 
   AnalogResult ph = readPh();
-  TurbidityReading turb = readTurbidity();
+  AnalogResult turb = readTurbidity();
   AnalogResult tds = readTds();
+
+  if (ph.hasValue) {
+    Serial.printf("[PH] raw_avg=%d | A0=%.3f V | provisional_pH=%.2f | NOT calibrated\n",
+                  ph.raw, ph.voltage, ph.value);
+  } else {
+    Serial.printf("[PH] raw_avg=%d | A0=%.3f V | pH unavailable: %s\n",
+                  ph.raw, ph.voltage, ph.error ? ph.error : "unknown error");
+  }
+
+  if (turb.hasValue) {
+    Serial.printf("[TURBIDITY] raw_avg=%d | A2=%.3f V | sensor_OUT_est=%.3f V | relative_index=%.1f/100 | status=%s (NOT NTU)\n",
+                  turb.raw, turb.voltage,
+                  turb.voltage * (TURBIDITY_R1_OHMS + TURBIDITY_R2_OHMS) / TURBIDITY_R2_OHMS,
+                  turb.value, getTurbidityStatus(turb.value));
+  } else {
+    Serial.printf("[TURBIDITY] raw_avg=%d | A2=%.3f V | unavailable: %s\n",
+                  turb.raw, turb.voltage, turb.error ? turb.error : "unknown error");
+  }
+
+  if (tds.hasValue) {
+    Serial.printf("[TDS] raw_avg=%d | A1=%.3f V | provisional_TDS=%.1f ppm | NOT calibrated\n",
+                  tds.raw, tds.voltage, tds.value);
+  } else {
+    Serial.printf("[TDS] raw_avg=%d | A1=%.3f V | unavailable: %s\n",
+                  tds.raw, tds.voltage, tds.error ? tds.error : "unknown error");
+  }
+
   TempResult temp = readTemperature();
   if (!temp.valid) pushError(temp.error);
+  if (!ph.hasValue && ph.error != NULL) pushError("pH estimate unavailable; inspect analog diagnostics");
+  if (!turb.hasValue && turb.error != NULL) pushError("turbidity estimate unavailable; inspect analog diagnostics");
+  if (!tds.hasValue && tds.error != NULL) pushError("TDS estimate unavailable; inspect analog diagnostics");
   if (!adsReady) pushError("ads1115: not found on I2C bus");
 
   char topic[128];
@@ -330,12 +419,10 @@ void publishTelemetry() {
               "{\"station_code\":\"%s\",\"device_id\":\"%s\",\"timestamp\":\"%s\",",
               STATION_CODE, DEVICE_ID, ts);
   p = appendJsonNum(payload, p, sizeof(payload), "pH", ph.hasValue, ph.value, 2);
-  p = appendf(payload, p, sizeof(payload), ",");
-  // `turbidity` keeps its legacy field name for MQTT/DB compatibility, but on
-  // hardware it carries the PROVISIONAL RELATIVE INDEX (0-100, higher =
-  // cloudier) — NOT NTU. The unit lives in diagnostics (relative_index_0_100).
-  p = appendJsonNum(payload, p, sizeof(payload), "turbidity", turb.valid, turb.index, 1);
-  p = appendf(payload, p, sizeof(payload), ",");
+  p = appendf(payload, p, sizeof(payload), ",\"pH_status\":\"%s\",", ph.hasValue ? "provisional_estimate" : "unavailable");
+  p = appendJsonNum(payload, p, sizeof(payload), "turbidity", turb.hasValue, turb.value, 2);
+  p = appendf(payload, p, sizeof(payload), ",\"turbidity_status\":\"%s\",\"turbidity_unit\":\"relative_index_0_100\",",
+              turb.hasValue ? getTurbidityStatus(turb.value) : "UNAVAILABLE");
   p = appendJsonNum(payload, p, sizeof(payload), "tds", tds.hasValue, tds.value, 1);
   p = appendf(payload, p, sizeof(payload), ",");
   p = appendJsonNum(payload, p, sizeof(payload), "temperature", temp.valid, temp.value, 2);
@@ -343,22 +430,7 @@ void publishTelemetry() {
 
   // Raw hardware data — never used for ML inference, shown to operators as-is.
   p = appendAnalogDiag(payload, p, sizeof(payload), "ph", ph);
-  // Turbidity diagnostics: averaged counts, A2 junction voltage, reconstructed
-  // sensor voltage, relative index + status band, and the unit metadata that
-  // keeps the index from ever being misread as NTU.
-  p = appendf(payload, p, sizeof(payload),
-              "\"turbidity\":{\"unit\":\"relative_index_0_100\",\"raw_adc\":%d,\"voltage_v\":%.3f,\"sensor_output_v\":%.3f,",
-              turb.rawAvg, turb.a2Voltage, turb.sensorVoltage);
-  if (turb.valid) {
-    p = appendf(payload, p, sizeof(payload),
-                "\"relative_index\":%.1f,\"relative_status\":\"%s\",\"calibration_status\":\"provisional_index\"",
-                turb.index, turb.status);
-  } else {
-    p = appendf(payload, p, sizeof(payload),
-                "\"relative_index\":null,\"relative_status\":null,\"calibration_status\":\"pending\",\"error\":\"%s\"",
-                turb.error ? turb.error : "unknown");
-  }
-  p = appendf(payload, p, sizeof(payload), "},");
+  p = appendAnalogDiag(payload, p, sizeof(payload), "turbidity", turb);
   p = appendAnalogDiag(payload, p, sizeof(payload), "tds", tds);
   p = appendf(payload, p, sizeof(payload),
               "\"temperature\":{\"sensor\":\"DS18B20\",\"valid\":%s",
@@ -455,6 +527,10 @@ void setup() {
 
   Serial.printf("\n[BOOT] HydraSense station %s (device %s), topic %s/%s/telemetry\n",
                 STATION_CODE, DEVICE_ID, MQTT_TOPIC_PREFIX, STATION_CODE);
+  Serial.printf("[PH] TEMP demo offset reference: %.4f V at pH 7; theoretical slope %.5f V/pH. Not a verified calibration; use a proper pH 7 buffer for calibration.\n",
+                PH_VOLTAGE_AT_PH7, PH_VOLTS_PER_PH_UNIT);
+  Serial.printf("[TURBIDITY] relative index 0-100; CLEARER <30, MODERATE 30-54, CLOUDIER >=55. Sensor OUT refs: clear=%.3f V, cloudy/dirty=%.3f V. NOT NTU.\n",
+                TURBIDITY_CLEAR_SENSOR_VOLTAGE, TURBIDITY_CLOUDY_SENSOR_VOLTAGE);
 }
 
 void loop() {

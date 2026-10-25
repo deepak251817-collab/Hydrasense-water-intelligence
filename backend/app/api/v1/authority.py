@@ -1,12 +1,24 @@
-from typing import List
-from fastapi import APIRouter, Depends, HTTPException, status
+from datetime import datetime, timezone
+from typing import List, Literal, Optional
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session, joinedload
 from app.api.deps import get_current_authority
 from app.core.database import get_db
 from app.models.user import User
 from app.models.water import MonitoringStation, SensorReading
 from app.schemas.ml_analysis import MLAnalysisResponse, ReadingAnalysisResponse
+from app.schemas.ml_status import MLStatusResponse
+from app.schemas.product_test import LiveAssessmentResponse
+from app.schemas.suitability import StationSuitabilityResponse
 from app.schemas.user import UserResponse
+from app.services.live_assessment_service import build_live_assessment
+from app.services.ml_service import ml_service
+from app.services.ml_status_service import build_ml_status
+from app.services.water_suitability import (
+    RULESET_VERSION,
+    assess_reading,
+    persist_assessments,
+)
 from app.schemas.water import (
     MonitoringStationAuthorityResponse,
     LatestSensorReadingResponse,
@@ -23,6 +35,105 @@ def get_authority_profile(
     return current_user
 
 
+@router.get("/ml/status", response_model=MLStatusResponse)
+def get_ml_status(
+    current_user: User = Depends(get_current_authority),
+):
+    """Model health + evaluation metrics (authority-only, read-only).
+
+    `evaluation` is the report produced by
+    `python ml/scripts/build_evaluation_report.py`. If it has not been
+    generated, `evaluation_available` is false and `evaluation` is null — the
+    API never fabricates model performance numbers.
+    """
+    return build_ml_status(
+        ml_service=ml_service,
+        report_path=None,
+    )
+
+
+@router.get("/stations/{station_code}/suitability", response_model=StationSuitabilityResponse)
+def get_station_suitability(
+    station_code: str,
+    current_user: User = Depends(get_current_authority),
+    db: Session = Depends(get_db),
+):
+    """Standards-based suitability screening for the latest station reading.
+
+    Compares only calibrated, physical, fresh measurements with the documented
+    BIS IS 10500 / CPCB limits; everything else is reported as missing. Each
+    result is persisted once per (reading, use, ruleset version) so the
+    assessment history is auditable without touching the original reading.
+    """
+    station = (
+        db.query(MonitoringStation)
+        .filter(MonitoringStation.station_code == station_code)
+        .first()
+    )
+    if not station:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Monitoring station with code '{station_code}' not found.",
+        )
+
+    reading = (
+        db.query(SensorReading)
+        .filter(SensorReading.station_id == station.id)
+        .order_by(SensorReading.timestamp.desc(), SensorReading.id.desc())
+        .first()
+    )
+
+    assessments = assess_reading(
+        reading, now=datetime.now(timezone.utc)
+    )
+    if reading is not None:
+        persist_assessments(db, station.id, assessments)
+
+    return StationSuitabilityResponse(
+        station_code=station.station_code,
+        station_name=station.station_name,
+        generated_at=datetime.now(timezone.utc),
+        ruleset_version=RULESET_VERSION,
+        assessments=assessments,
+    )
+
+
+@router.get("/stations/{station_code}/live-assessment", response_model=LiveAssessmentResponse)
+def get_live_water_assessment(
+    station_code: str,
+    use: Literal[
+        "drinking", "domestic", "irrigation", "general", "swimming", "aquaculture"
+    ] = Query(
+        "drinking", description="Intended use for this assessment"
+    ),
+    aquaculture_context: Optional[str] = Query(
+        None, max_length=200, description="Species/farming context for aquaculture"
+    ),
+    current_user: User = Depends(get_current_authority),
+    db: Session = Depends(get_db),
+):
+    """Stable-reading assessment for Live Monitoring (authority-only).
+
+    Uses the same shared screening service as Product User tests. Stability is
+    computed from the rolling window of real stored readings; stable readings
+    are never treated as calibrated. A stable, persisted assessment receives a
+    ``LIVE-######`` test ID.
+    """
+    station = (
+        db.query(MonitoringStation)
+        .filter(MonitoringStation.station_code == station_code)
+        .first()
+    )
+    if not station:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Monitoring station with code '{station_code}' not found.",
+        )
+    return build_live_assessment(
+        db, station, use, aquaculture_context=aquaculture_context
+    )
+
+
 @router.get("/stations", response_model=List[MonitoringStationAuthorityResponse])
 def get_all_monitoring_stations(
     current_user: User = Depends(get_current_authority),
@@ -31,6 +142,9 @@ def get_all_monitoring_stations(
     stations = (
         db.query(MonitoringStation)
         .options(joinedload(MonitoringStation.water_source))
+        # Deterministic order so the dashboard's initial station selection is
+        # stable across requests and restarts.
+        .order_by(MonitoringStation.station_code)
         .all()
     )
     return stations

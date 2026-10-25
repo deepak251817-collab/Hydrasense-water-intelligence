@@ -130,6 +130,27 @@ python ml/scripts/data_quality_report.py
 python ml/preprocessing/clean_data.py
 ```
 
+### 3b. Clean External Datasets (audited copies)
+```bash
+python ml/preprocessing/clean_datasets.py
+```
+
+`clean_data.py` only understands the station-telemetry export. This second cleaner handles every
+dataset shape in the repo (USGS long-format series, the benchmark table, and telemetry) and writes
+**copies** to `ml/data/processed/cleaned/` — the sources under `ml/data/external/` and
+`ml/data/raw/` are opened read-only and are never modified.
+
+Guarantees enforced by the script (it aborts if any fails):
+
+- source SHA-256 identical before and after;
+- row counts reconcile (`input - sum(removed per step) == output`);
+- the output is a row-subset of the input on the dataset's key columns;
+- no imputation, scaling, clipping or unit conversion.
+
+It writes `ml/reports/dataset_cleaning_report.json` and `.md` listing every operation with real
+before/after counts. Last run: 6 datasets, 140,809 rows in → 140,809 out, **0 rows removed** (the
+datasets were already clean), all checks passed. See `docs/DATA_CLEANING_REPORT.md`.
+
 ### 4. Create Chronological Splits
 ```bash
 python ml/scripts/create_splits.py
@@ -149,6 +170,13 @@ python ml/scripts/detect_anomalies.py
 ```bash
 python ml/scripts/evaluate_isolation_forest.py
 ```
+
+### 8. Build Evaluation Report (all models)
+```bash
+python ml/scripts/build_evaluation_report.py
+```
+
+Loads the saved artifacts (`isolation_forest.joblib`, `random_forest_classifier.joblib`, `xgboost_deterioration.joblib`), scores the held-out test splits, and writes a machine-readable report to `ml/reports/evaluation_report.json` plus a human-readable `ml/reports/evaluation_report.md`. Every metric is computed at generation time — nothing is hardcoded. The backend serves this report (with live model load state) at `GET /api/authority/ml/status`, which the Analytics dashboard's **Model Health & Evaluation** card renders. When the report file is absent the API returns `evaluation_available: false` and no metrics are shown.
 
 ---
 

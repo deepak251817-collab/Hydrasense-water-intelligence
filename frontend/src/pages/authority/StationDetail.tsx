@@ -190,13 +190,12 @@ export default function StationDetail() {
         {/* 2. Live Readings */}
         {activeSection === "readings" && (
           <div className="space-y-4 animate-in fade-in duration-300">
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
               {[
                 { label: "pH Level",          value: source.pH,              unit: "",       icon: Droplets,     normal: source.pH >= 6.5 && source.pH <= 8.5 },
-                { label: "Turbidity",         value: source.turbidity,       unit: " NTU",   icon: Wind,         normal: source.turbidity < 10 },
-                { label: "TDS",               value: source.tds,             unit: " mg/L",  icon: Droplets,     normal: source.tds < 400 },
-                { label: "Temperature",       value: source.temperature,     unit: "°C",     icon: Thermometer,  normal: source.temperature < 30 },
-                { label: "Dissolved O₂",      value: source.dissolvedOxygen, unit: " mg/L",  icon: Activity,     normal: source.dissolvedOxygen > 5 },
+                { label: "Turbidity Index",    value: source.turbidity,       unit: " / 100", icon: Wind,         normal: source.turbidity < 30 },
+                { label: "TDS",               value: source.tds,             unit: " mg/L",  icon: Droplets,     normal: source.tds < 500 },
+                { label: "Temperature",       value: source.temperature,     unit: "°C",     icon: Thermometer,  normal: source.temperature < 40 },
               ].map(({ label, value, unit, icon: Icon, normal }) => (
                 <div
                   key={label}
@@ -210,7 +209,7 @@ export default function StationDetail() {
                     {value}{unit}
                   </p>
                   <p className={`text-xs mt-1 font-semibold ${normal ? "text-emerald-600" : "text-red-500"}`}>
-                    {normal ? "Within range" : "Out of range"}
+                    {normal ? "Within configured range" : "Outside configured range"}
                   </p>
                 </div>
               ))}
@@ -252,7 +251,7 @@ export default function StationDetail() {
                   <YAxis tick={{ fontSize: 11 }} />
                   <Tooltip />
                   <Legend />
-                  <Line type="monotone" dataKey="turbidity" stroke="#f59e0b" strokeWidth={2} dot={{ r: 3 }} name="Turbidity (NTU)" />
+                  <Line type="monotone" dataKey="turbidity" stroke="#f59e0b" strokeWidth={2} dot={{ r: 3 }} name="Turbidity Index (0–100, not NTU)" />
                   <Line type="monotone" dataKey="tds" stroke="#ef4444" strokeWidth={2} dot={{ r: 3 }} name="TDS (mg/L)" />
                 </LineChart>
               </ResponsiveContainer>
@@ -286,8 +285,8 @@ export default function StationDetail() {
             </div>
             <div className="grid sm:grid-cols-2 gap-4">
               {[
-                { title: "Trend Prediction (48h)", body: "Turbidity likely to remain elevated based on current gradient. No rainfall forecast to accelerate runoff.", confidence: "Medium" },
-                { title: "DO Risk Assessment", body: "Dissolved oxygen at lower threshold. Hypoxic risk elevated if trend continues without intervention.", confidence: "High" },
+                { title: "Trend Preview (48h)", body: "Illustrative preview: the turbidity index may stay elevated if the current simulated gradient continues. No rainfall forecast is integrated.", confidence: "Medium" },
+                { title: "Turbidity Index Watch", body: "The analog turbidity sensor reports a relative 0–100 index (higher = cloudier). Values at or above 55 sit in the CLOUDIER demo band and are never compared with NTU limits.", confidence: "High" },
               ].map(({ title, body, confidence }) => (
                 <div key={title} className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
                   <div className="flex items-center justify-between mb-3">
@@ -499,9 +498,9 @@ export default function StationDetail() {
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-xs">
                   <span className="text-slate-500">pH: <strong className="text-slate-800">{source.pH}</strong></span>
-                  <span className="text-slate-500">Turbidity: <strong className="text-slate-800">{source.turbidity} NTU</strong></span>
-                  <span className="text-slate-500">TDS: <strong className="text-slate-800">{source.tds} ppm</strong></span>
-                  <span className="text-slate-500">DO: <strong className="text-slate-800">{source.dissolvedOxygen} mg/L</strong></span>
+                  <span className="text-slate-500">Turbidity Index: <strong className="text-slate-800">{source.turbidity} / 100</strong> <span className="text-[10px]">(not NTU)</span></span>
+                  <span className="text-slate-500">TDS: <strong className="text-slate-800">{source.tds} mg/L</strong></span>
+                  <span className="text-slate-500">Temperature: <strong className="text-slate-800">{source.temperature} °C</strong></span>
                 </div>
                 {source.publicWarning && (
                   <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-800">
@@ -524,7 +523,7 @@ export default function StationDetail() {
               </div>
               <div className="divide-y divide-slate-100">
                 {[
-                  { time: "Today 09:14", actor: "System", action: `Telemetry sync completed for ${source.id}. 5 parameters updated.` },
+                  { time: "Today 09:14", actor: "System", action: `Telemetry sync completed for ${source.id}. 4 parameters updated.` },
                   { time: "Today 08:00", actor: "Alert Engine", action: `Risk status changed to "${source.risk}" based on sensor threshold breach.` },
                   { time: "Yesterday 17:30", actor: "Officer K. Rao", action: "Inspection record INS-4402 attached to station." },
                   { time: "Aug 19, 14:10", actor: "System", action: "Sensor calibration record verified. Probe battery status synced." },

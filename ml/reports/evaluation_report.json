@@ -1,0 +1,197 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-10-24T01:10:26.346260+00:00",
+  "generator": "ml/scripts/build_evaluation_report.py",
+  "environment": {
+    "python": "3.11.9",
+    "scikit_learn": "1.4.2",
+    "pandas": "2.2.2",
+    "numpy": "1.26.4"
+  },
+  "honesty_policy": "Every metric in this report is computed from saved repository artifacts; none are hardcoded. Models are not laboratory instruments and their outputs are estimates, not confirmed water safety.",
+  "random_forest": {
+    "available": true,
+    "task": "Binary water-quality classification (Safe/Unsafe)",
+    "live_inference": true,
+    "model": {
+      "file": "random_forest_classifier.joblib",
+      "size_bytes": 302761,
+      "sha256": "c3c66281d1c77fb47ef0bd0052496eb9434b526c5e10edbd9151852826a4c38f",
+      "estimator": "RandomForestClassifier",
+      "sklearn_version": "1.4.2",
+      "n_features_in": 4,
+      "n_estimators": 100,
+      "max_depth": null,
+      "class_weight": null,
+      "classes": [
+        "Safe",
+        "Unsafe"
+      ]
+    },
+    "dataset": {
+      "name": "water_quality_dataset1",
+      "source_file": "ml/data/external/water_quality_dataset1.csv",
+      "split_file": "supervised_test.csv",
+      "split": "held-out stratified test split (15%, random_state=42)",
+      "n_test_samples": 15120,
+      "class_distribution": {
+        "Safe": 4536,
+        "Unsafe": 10584
+      },
+      "features": [
+        "pH",
+        "tds",
+        "turbidity",
+        "temperature"
+      ],
+      "target": "Safe/Unsafe label from the benchmark dataset",
+      "provenance_note": "Static benchmark dataset of physicochemical parameters; label semantics follow the source dataset and are not universal potability."
+    },
+    "metrics": {
+      "n_samples": 15120,
+      "accuracy": 0.9998677248677249,
+      "balanced_accuracy": 0.9998425296044343,
+      "precision_macro": 0.9998425296044343,
+      "recall_macro": 0.9998425296044343,
+      "f1_macro": 0.9998425296044343,
+      "f1_weighted": 0.9998677248677249,
+      "confusion_matrix": {
+        "labels": [
+          "Safe",
+          "Unsafe"
+        ],
+        "matrix": [
+          [
+            4535,
+            1
+          ],
+          [
+            1,
+            10583
+          ]
+        ],
+        "row_semantics": "true class (rows) vs predicted class (columns)"
+      },
+      "per_class": {
+        "Safe": {
+          "precision": 0.9997795414462081,
+          "recall": 0.9997795414462081,
+          "f1": 0.9997795414462081,
+          "support": 4536
+        },
+        "Unsafe": {
+          "precision": 0.9999055177626606,
+          "recall": 0.9999055177626606,
+          "f1": 0.9999055177626606,
+          "support": 10584
+        }
+      },
+      "roc_auc_unsafe": 0.9999999583411652
+    }
+  },
+  "isolation_forest": {
+    "available": true,
+    "task": "Unsupervised anomaly screening",
+    "live_inference": true,
+    "model": {
+      "file": "isolation_forest.joblib",
+      "size_bytes": 137625,
+      "sha256": "54697d043b43f06f17fac074b50281ece497d16548fa53a207c327179242afb5",
+      "estimator": "IsolationForest",
+      "sklearn_version": "1.4.2",
+      "n_features_in": 4,
+      "n_estimators": 100,
+      "contamination": 0.05,
+      "max_samples": "auto"
+    },
+    "dataset": {
+      "name": "station telemetry (Phase 5B clean sensor readings)",
+      "split_file": "anomaly_results.csv",
+      "n_scored_readings": 9,
+      "note": "Unsupervised: there are no ground-truth contamination labels, so accuracy/precision/recall are intentionally not reported."
+    },
+    "summary": {
+      "anomalies_flagged": 4,
+      "anomaly_rate": 0.4444444444444444,
+      "score_min": -0.022505,
+      "score_max": 0.103192,
+      "score_mean": 0.022527111111111116
+    }
+  },
+  "xgboost": {
+    "available": true,
+    "task": "Rule-based future-deterioration prediction",
+    "live_inference": false,
+    "live_note": "Offline analysis only: requires USGS lag/rolling and conductivity-derived features that live telemetry does not provide.",
+    "model": {
+      "file": "xgboost_deterioration.joblib",
+      "size_bytes": 616031,
+      "sha256": "e4fc5402345b1ebbcd84495c8b4474e898f66194dd25c9b24d7c5dd41cb5c322",
+      "estimator": "XGBClassifier",
+      "sklearn_version": "1.4.2",
+      "n_features_in": 36,
+      "n_estimators": 200,
+      "max_depth": 6,
+      "learning_rate": 0.05
+    },
+    "dataset": {
+      "name": "USGS time series",
+      "stations": [
+        "USGS-01649190"
+      ],
+      "split_file": "xgboost_predictions.csv",
+      "n_test_samples": 1139,
+      "target": "rule-based deterioration indicator over the next observation",
+      "provenance_note": "Single USGS station, ~5 weeks of synchronized 5-minute observations; temporal generalization is limited."
+    },
+    "metrics": {
+      "n_samples": 1139,
+      "accuracy": 0.9438103599648815,
+      "balanced_accuracy": 0.5375699440447642,
+      "precision_macro": 0.5239348158207435,
+      "recall_macro": 0.5375699440447642,
+      "f1_macro": 0.5283643892339545,
+      "f1_weighted": 0.950028447459451,
+      "confusion_matrix": {
+        "labels": [
+          "Safe",
+          "Unsafe"
+        ],
+        "matrix": [
+          [
+            1072,
+            40
+          ],
+          [
+            24,
+            3
+          ]
+        ],
+        "row_semantics": "true class (rows) vs predicted class (columns)"
+      },
+      "per_class": {
+        "Safe": {
+          "precision": 0.9781021897810219,
+          "recall": 0.9640287769784173,
+          "f1": 0.9710144927536232,
+          "support": 1112
+        },
+        "Unsafe": {
+          "precision": 0.06976744186046512,
+          "recall": 0.1111111111111111,
+          "f1": 0.08571428571428572,
+          "support": 27
+        }
+      },
+      "roc_auc_unsafe": 0.6287636557420729
+    }
+  },
+  "limitations": [
+    "The Safe/Unsafe label is the benchmark dataset's labeling rule; it is not laboratory confirmation, potability, or a guarantee of safety.",
+    "Random Forest metrics come from a stratified held-out test split of a static benchmark dataset, not from these live sensors; real-world performance depends on how closely future data matches that distribution.",
+    "Isolation Forest has no ground-truth contamination labels; its anomaly rate is descriptive only. An anomaly is an unusual sensor pattern, not confirmed pollution.",
+    "XGBoost deterioration prediction is offline-only: it requires USGS-specific lag/rolling and conductivity-derived features that live telemetry does not provide.",
+    "Simulator telemetry is for pipeline testing only and is never treated as scientific ground truth.",
+    "ESP32 turbidity is a provisional relative index 0-100, not NTU; relative-index readings are deliberately excluded from ML inference."
+  ]
+}
