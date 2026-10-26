@@ -2,33 +2,42 @@ import { Link } from "react-router-dom";
 import { History, CheckCircle2, ShieldAlert, ArrowRight, RotateCcw } from "lucide-react";
 
 export default function MyChecks() {
-  const mockSavedChecks = [
+  /**
+   * Demonstration entries only. The public (unauthenticated) check flow has no
+   * backend storage yet, so these are clearly-labelled samples scoped to the
+   * three demonstration rivers — never presented as stored readings, and never
+   * quoted in NTU (the hardware reports a relative turbidity index 0–100).
+   */
+  const demoSavedChecks = [
     {
-      id: "chk-001",
-      sourceName: "Hebbal Lake",
+      id: "demo-001",
+      sourceName: "Vrishabhavathi River",
       intendedUse: "Domestic Use",
-      screeningResult: "Safe for Non-Potable Use",
-      status: "Safe",
-      date: "Today, 08:30 AM",
-      details: "Turbidity 4.8 NTU, pH 7.2. Safe for washing and outdoor maintenance.",
-    },
-    {
-      id: "chk-002",
-      sourceName: "Thippagondanahalli Reservoir",
-      intendedUse: "Drinking",
-      screeningResult: "Not Recommended (Raw Surface Water)",
+      screeningResult: "Review before regular use",
       status: "Restricted",
-      date: "Yesterday, 05:15 PM",
-      details: "High turbidity (17.6 NTU) and deteriorating trend. Secondary treatment required.",
+      date: "Sample entry",
+      details:
+        "Sample record: turbidity index 68/100 (CLOUDIER band, higher = cloudier — not NTU), pH 7.4. Demonstration data, not a stored measurement.",
     },
     {
-      id: "chk-003",
-      sourceName: "Jakkur Lake",
+      id: "demo-002",
+      sourceName: "Arkavathi River",
+      intendedUse: "Drinking",
+      screeningResult: "Additional testing required",
+      status: "Restricted",
+      date: "Sample entry",
+      details:
+        "Sample record: relative turbidity index — NTU calibration required, so no NTU comparison is made. Demonstration data, not a stored measurement.",
+    },
+    {
+      id: "demo-003",
+      sourceName: "Cauvery River",
       intendedUse: "Irrigation",
-      screeningResult: "Acceptable for Crops",
+      screeningResult: "Measured indicators within configured screening ranges",
       status: "Safe",
-      date: "Aug 18, 2026",
-      details: "TDS 348 mg/L within acceptable agricultural threshold.",
+      date: "Sample entry",
+      details:
+        "Sample record: TDS 348 mg/L against the project-configured screening reference. Demonstration data — screening is not a certification of fitness for irrigation.",
     },
   ];
 
@@ -47,6 +56,11 @@ export default function MyChecks() {
           <p className="mt-1 text-sm text-slate-500 max-w-2xl">
             Review past water screening checks performed on this device.
           </p>
+          <p className="mt-2 inline-flex items-start gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] font-semibold text-amber-800">
+            Demonstration entries — the public check flow does not persist history yet. These
+            samples use the three demonstration rivers and show a relative turbidity index
+            (0–100), never NTU.
+          </p>
         </div>
 
         <Link
@@ -60,7 +74,7 @@ export default function MyChecks() {
 
       {/* Checks List */}
       <div className="space-y-4">
-        {mockSavedChecks.map((check) => {
+        {demoSavedChecks.map((check) => {
           const isSafe = check.status === "Safe";
           return (
             <div

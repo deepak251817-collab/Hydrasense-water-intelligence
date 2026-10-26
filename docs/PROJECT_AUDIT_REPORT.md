@@ -149,7 +149,7 @@ Never start the backend with `python run_server.py`. Detailed setup: [README.md]
    rate, no ground-truth labels.
 2. **Benchmark provenance missing** and the label is a deterministic rule; field accuracy unknown.
 3. **XGBoost is offline only**, single station, ~5 weeks, balanced accuracy 0.54.
-4. **Much of the authority dashboard is mock UI** (five pages, plus the top board of Live Monitoring); station detail is keyed by mock ids.
+4. **Much of the authority dashboard is mock UI** (five pages, plus the top board of Live Monitoring); station detail is keyed by mock ids. *(Alerts threshold card corrected in the validation pass — it no longer claims DO/NTU/AI-risk triggers.)*
 5. **Incident, inspection, lab and notification backends are missing**; those pages are
    prototypes. (Alerting **was added**: `GET /api/product/alerts` + a versioned threshold profile
    that separates official BIS values from project-configured ones.)
@@ -191,6 +191,15 @@ Never start the backend with `python run_server.py`. Detailed setup: [README.md]
 > Also resolved since the audit: persistent multi-worker simulation state, the versioned alert
 > threshold profile, validated baseline forecasting with holdout gating, and the turbidity-index
 > ML exclusion message (workflow documented in `docs/TURBIDITY_INDEX_ML.md`).
+>
+> **Validation pass (2026-10-26, `feature/software-hardening-and-validation`).** Verified the
+> four-parameter pipeline, simulation state, turbidity-unit handling, screening/alert honesty and
+> three-river scope against code and tests (backend 342, ML 140, frontend 70 all passing; build and
+> lint clean; migrations at head). Two honesty defects were fixed in the UI: the Alerts threshold
+> card no longer claims dissolved-oxygen, NTU or “AI risk” triggers (now the four-sensor
+> project-configured tiers pointing at the versioned profile endpoint, with the SMS/webhook claim
+> removed), and the public My Checks page no longer fabricates lake/reservoir history quoted in NTU
+> (now labelled three-river demonstration entries using the relative index).
 
 ### 1. Close the privilege-escalation hole (minutes, highest urgency) — **DONE**
 `POST /api/auth/register` previously honoured a caller-supplied `role`. It now forces

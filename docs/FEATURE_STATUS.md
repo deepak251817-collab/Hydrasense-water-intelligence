@@ -140,6 +140,18 @@
 Configuration lives in `backend/.env.example` (`CORS_*`, `RATE_LIMIT_*`, `JWT_SECRET_KEY`).
 Run `alembic upgrade head` to create the rate-limit table.
 
+### Resolved in this pass (validation pass, `feature/software-hardening-and-validation`, 2026-10-26)
+
+| Area | What was wrong | Resolution | Evidence |
+|---|---|---|---|
+| Alerts page threshold card | Claimed unmeasured inputs: “Turbidity > 25 NTU, DO < 3.5 mg/L, or AI Risk > 90%”, plus an automated SMS/webhook dispatch claim | Rewritten to the four monitored sensors (turbidity **index** bands 55/85, TDS 500/2000 mg/L references, pH 6.5–8.5), labelled project-configured (not BIS/WHO), linked to `GET /api/product/alerts/profile`, with an explicit “no SMS/webhook dispatch implemented” note and a statement that DO/microbial/chemical parameters are never part of the tiers | `frontend/src/pages/authority/Alerts.tsx`; `npm run build`, `npm run lint` clean |
+| Public “My Checks” page | Fabricated history for unrelated water bodies (Hebbal Lake, Thippagondanahalli, Jakkur) with turbidity quoted **in NTU** and “Safe” verdicts | Replaced with labelled demonstration entries for the three rivers, turbidity shown as a relative index (NTU calibration called out), verdicts phrased as screening outcomes, and a visible banner that public history is not persisted yet | `frontend/src/pages/public/MyChecks.tsx` |
+| Three-river demo scope | — (verified, no change needed) | DB `water_sources` contains exactly ARKAVATHI / CAUVERY / VRISHABHAVATHI; seed script and `mockData.ts` list only those three | `select source_code,name from water_sources` → 3 rows; `backend/scripts/seed_demo.py`; `frontend/src/data/mockData.ts` |
+| Sensor/alert honesty | — (verified, no change needed) | Alerts never trigger on missing/stale readings (warning/freshness instead), missing values are never replaced by zero, simulated rows are labelled, and turbidity index is never compared with NTU | `tests/test_simulation_and_alerts.py`, `tests/test_telemetry.py`, `tests/test_product_screening.py` |
+
+Verification run in this pass: backend `342 passed`, ML `140 passed`, frontend `vitest 70 passed`,
+`npm run build` exit 0, `npm run lint` 0 errors, `alembic current` = `e7f8a9b0c1d2` (head).
+
 ### Remaining limitations
 
 | Finding | Severity | Detail | Fix direction |
@@ -150,6 +162,9 @@ Run `alembic upgrade head` to create the rate-limit table.
 | Rate limiting covers auth only | Low | `/auth/login` and `/auth/register` are throttled; public and authority endpoints are not, and no global gateway limit exists | Extend `rate_limit(...)` dependencies or add an edge/WAF rule before real deployment |
 | Rate-limit storage is PostgreSQL-only | Info | Counters use `SELECT ... FOR UPDATE` row locks; a non-PostgreSQL store would need its own atomic backend | Keep PostgreSQL, or swap in Redis if the stack ever moves |
 | Production configuration not verified | Info | The production CORS allowlist, `APP_ENV=production` secret, and proxy settings are code-verified only — no production deployment has been exercised | Verify on the real deployment before claiming production security |
+| Authority prototype pages still mock | Medium | Incidents, Inspections and Laboratory render demonstration content with no backend endpoints; Command Center, Live Monitoring's top board, Water Sources and parts of Station Detail still mix mock data | Wire them to the existing endpoints or label each page "prototype" in the UI |
+| Public check history not persisted | Low | The public (unauthenticated) My Checks page shows clearly-labelled demonstration entries — there is no endpoint storing public check history | Persist public checks or drop the page from navigation |
+| No index-trained ML model / no probabilistic forecast | Info | Holdout MAE is an evaluation measure, not a prediction interval; turbidity-index readings keep the explicit "ML prediction unavailable" status | Paired index + reference-labelled data required before an index model; more history before stronger forecasts |
 
 ---
 

@@ -30,7 +30,8 @@ export default function Alerts() {
             Operations Alert Desk
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            Automated environmental limit violations and predictive model deterioration warnings.
+            Demonstration alerts for the three demonstration rivers. Acknowledgement is local to
+            this browser session — no alert history, SMS or webhook dispatch is implemented yet.
           </p>
         </div>
 
@@ -67,7 +68,7 @@ export default function Alerts() {
                   <span className="text-[10px] uppercase font-black">Level 1</span>
                 </div>
                 <p className="text-[11px] text-red-800 mt-1">
-                  Turbidity &gt; 25 NTU, DO &lt; 3.5 mg/L, or AI Risk &gt; 90%
+                Turbidity index ≥ 85/100 (cloudier band) or TDS above 2,000 mg/L
                 </p>
               </div>
 
@@ -77,7 +78,7 @@ export default function Alerts() {
                   <span className="text-[10px] uppercase font-black">Level 2</span>
                 </div>
                 <p className="text-[11px] text-orange-800 mt-1">
-                  Turbidity &gt; 15 NTU, TDS &gt; 500 mg/L, or AI Risk &gt; 75%
+                Turbidity index ≥ 55/100 (CLOUDIER band) or TDS above 500 mg/L
                 </p>
               </div>
 
@@ -87,14 +88,25 @@ export default function Alerts() {
                   <span className="text-[10px] uppercase font-black">Level 3</span>
                 </div>
                 <p className="text-[11px] text-amber-800 mt-1">
-                  Consecutive drift &gt; +10% across 4 cycles
+                pH outside 6.5–8.5, or consecutive drift above +10% across 4 cycles
                 </p>
               </div>
             </div>
           </div>
 
           <div className="border-t border-slate-100 pt-4 text-[11px] text-slate-400">
-            Escalation triggers dispatch automated SMS/webhook packets to designated regional field officers.
+            <p>
+              <strong className="font-semibold text-slate-500">Project-configured demo
+              thresholds</strong> for the four monitored sensors (pH, TDS, turbidity index,
+              temperature) — not BIS, WHO or government-approved limits. The authoritative
+              profile with sources and the official/project classification is served by
+              <code className="mx-1 rounded bg-slate-100 px-1">GET /api/product/alerts/profile</code>.
+            </p>
+            <p className="mt-1.5">
+              Turbidity is a relative 0–100 index and is never compared with an NTU limit.
+              Dissolved oxygen, microbial and chemical contaminants are not measured by this
+              hardware and are never part of these tiers.
+            </p>
           </div>
         </div>
       </div>
