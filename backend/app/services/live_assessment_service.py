@@ -11,7 +11,8 @@ from sqlalchemy.orm import Session
 from app.models.water import MonitoringStation, SensorReading
 from app.models.water_test import LiveWaterAssessment
 from app.services.sensor_stability import compute_stability
-from app.services.water_screening import CRITERIA_VERSION, USE_LABELS, assess
+from app.services.water_screening import CRITERIA_VERSION, USE_LABELS
+from app.services.suitability_engine import evaluate as assess
 
 POLL_INTERVAL_SECONDS = 5
 READING_WINDOW_LIMIT = 40
@@ -62,6 +63,7 @@ def _persist(
         device_id=reading.device_id,
         use_code=use,
         overall_status=assessment["overall"]["status"],
+        overall_state=assessment["overall"].get("state"),
         criteria_version=CRITERIA_VERSION,
         assessment=assessment,
         reading_timestamp=reading.timestamp,

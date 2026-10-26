@@ -49,6 +49,10 @@ class ProductWaterTest(Base):
     )
 
     overall_status: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    # Canonical four-state suitability vocabulary
+    # (within_configured_ranges | caution | outside_configured_ranges |
+    #  insufficient_data) derived from the central suitability engine.
+    overall_state: Mapped[Optional[str]] = mapped_column(String(40), nullable=True, index=True)
     criteria_version: Mapped[str] = mapped_column(String(40), nullable=False)
     assessment: Mapped[dict] = mapped_column(JSON, nullable=False)
     summary_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -84,6 +88,8 @@ class LiveWaterAssessment(Base):
     device_id: Mapped[str] = mapped_column(String(100), nullable=False)
     use_code: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     overall_status: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    # Canonical four-state suitability vocabulary (see services/screening_states.py).
+    overall_state: Mapped[Optional[str]] = mapped_column(String(40), nullable=True, index=True)
     criteria_version: Mapped[str] = mapped_column(String(40), nullable=False)
     assessment: Mapped[dict] = mapped_column(JSON, nullable=False)
     reading_timestamp: Mapped[Optional[datetime]] = mapped_column(

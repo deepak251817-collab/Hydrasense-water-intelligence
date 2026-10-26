@@ -152,6 +152,19 @@ Run `alembic upgrade head` to create the rate-limit table.
 Verification run in this pass: backend `342 passed`, ML `140 passed`, frontend `vitest 70 passed`,
 `npm run build` exit 0, `npm run lint` 0 errors, `alembic current` = `e7f8a9b0c1d2` (head).
 
+### Resolved in this pass (central four-parameter suitability engine, 2026-10-26)
+
+| Area | What was enforced | Resolution | Evidence |
+|---|---|---|---|
+| Single central engine | Suitability decisions were computed in two engines with different status vocabularies and no pinned input contract | `app/services/suitability_engine.py` is the enforced façade: it accepts **exactly** `ph`, `tds`, `temperature`, `turbidity` (any other key raises `ValueError` — DO, ML scores, rainfall, history, location can never influence a decision), delegates to the per-purpose profiles, and declares its inputs/exclusions in every response | `tests/test_suitability_engine.py` (input-contract, exclusion and rejection tests) |
+| Canonical result vocabulary | Two legacy vocabularies (product/live `WITHIN_PROJECT_TARGETS…`, station `preliminary_suitable…`) | One four-state vocabulary in `app/services/screening_states.py`: `within_configured_ranges` / `caution` / `outside_configured_ranges` / `insufficient_data`, mapped from both engines with unknown codes rejected rather than guessed | `screening_states.py`; station assessments now carry `state` + `state_label` |
+| Persistence & API | Canonical state was not stored or served | `overall_state` column on `product_water_tests` and `live_water_assessments` (migration `a9b0c1d2e3f4`, backfilled from stored JSON), served next to the unchanged legacy `overall_status` so existing UI keeps working | `models/water_test.py`, `schemas/product_test.py`, migration run at head |
+| Precedence (never a false positive) | Invalid temperature/turbidity could ride along with a green result | Invalid, stale, unstable or non-finite readings of any of the four sensors now collapse the whole assessment to `insufficient_data` | `water_screening._overall_status` + boundary tests (pH/TDS/temperature/missing/NaN/stale/unstable/calibration) |
+| Turbidity honesty | — (verified and pinned) | Relative index 0–100 is `not_comparable` and never judged against 1/5 NTU limits; only a genuinely NTU-calibrated measurement uses the NTU references | index-vs-NTU tests in both engines |
+
+Verification: backend `391 passed` (342 + 49 new), frontend `vitest 70 passed`, `npm run build` exit 0,
+`npm run lint` 0 errors, `alembic current` = `a9b0c1d2e3f4` (head).
+
 ### Remaining limitations
 
 | Finding | Severity | Detail | Fix direction |

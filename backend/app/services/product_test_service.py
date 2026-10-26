@@ -19,12 +19,13 @@ from app.models.water import SensorReading
 from app.models.water_test import ProductWaterTest
 from app.schemas.product_test import ProductWaterTestCreate
 from app.services.sensor_stability import compute_stability
+from app.services.suitability_engine import evaluate as assess
+from app.services.screening_states import canonical_state
 from app.services.water_screening import (
     CRITERIA_VERSION,
     FRESH_WITHIN_SECONDS,
     SOURCE_LABELS,
     USE_LABELS,
-    assess,
     validate_readings,
 )
 
@@ -352,6 +353,8 @@ def create_test(
         temperature=reading["temperature"],
         reading_timestamp=_as_utc(reading["reading_timestamp"]),
         overall_status=result["overall"]["status"],
+        overall_state=result["overall"].get("state")
+        or canonical_state(result["overall"]["status"]),
         criteria_version=CRITERIA_VERSION,
         assessment=result,
         summary_text=result["overall"]["summary"],
@@ -388,6 +391,7 @@ def serialize_test(db: Session, test: ProductWaterTest) -> Dict[str, Any]:
         "reading_timestamp": test.reading_timestamp,
         "created_at": test.created_at,
         "overall_status": test.overall_status,
+        "overall_state": test.overall_state,
         "overall_label": overall.get("label", test.overall_status),
         "criteria_version": test.criteria_version,
         "assessment": assessment,
@@ -405,6 +409,7 @@ def serialize_summary(test: ProductWaterTest) -> Dict[str, Any]:
         "intended_use_label": USE_LABELS.get(test.intended_use, test.intended_use),
         "reading_mode": test.reading_mode,
         "overall_status": test.overall_status,
+        "overall_state": test.overall_state,
         "overall_label": overall.get("label", test.overall_status),
         "ph": test.ph,
         "tds": test.tds,

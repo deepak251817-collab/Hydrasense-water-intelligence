@@ -69,6 +69,8 @@ from typing import Any, Iterable, Optional
 
 from sqlalchemy.orm import Session
 
+from app.services.screening_states import canonical_state, state_label
+
 logger = logging.getLogger("hydrasense.suitability")
 
 RULESET_VERSION = "2026.10.1"
@@ -607,6 +609,10 @@ def assess_use(use: UseSpec, reading: Any, now: Optional[datetime] = None) -> di
         "ruleset_version": RULESET_VERSION,
         "result": code,
         "result_label": RESULT_LABELS[code],
+        # Canonical four-state vocabulary (shared with the product/live
+        # screening engine) so the API and UI always agree.
+        "state": canonical_state(code, engine="station"),
+        "state_label": state_label(canonical_state(code, engine="station")),
         "summary": _explain(use, code, evaluated, freshness, age),
         "parameters": evaluated,
         "missing_parameters": missing,

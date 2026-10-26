@@ -513,6 +513,7 @@ def _overall_status(
     ph: Dict[str, Any],
     tds: Dict[str, Any],
     turbidity: Dict[str, Any],
+    temperature: Dict[str, Any],
     errors: Sequence[str],
     stale: bool,
     stability: Optional[Mapping[str, Any]],
@@ -533,7 +534,13 @@ def _overall_status(
         # cannot be produced from these four readings.
         return "INCONCLUSIVE"
 
-    if ph["status"] == "invalid" or tds["status"] == "invalid":
+    # An invalid reading of ANY of the four sensors can never ride along with a
+    # positive result: implausible pH/TDS/temperature/turbidity collapses the
+    # whole assessment to inconclusive.
+    if any(
+        entry["status"] == "invalid"
+        for entry in (ph, tds, turbidity, temperature)
+    ):
         return "INCONCLUSIVE"
 
     if intended_use == "drinking":
@@ -1169,6 +1176,7 @@ def assess(
         ph=ph_eval,
         tds=tds_eval,
         turbidity=turbidity_eval,
+        temperature=temperature_eval,
         errors=validation["errors"],
         stale=stale,
         stability=stability,

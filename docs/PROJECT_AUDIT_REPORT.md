@@ -200,6 +200,16 @@ Never start the backend with `python run_server.py`. Detailed setup: [README.md]
 > project-configured tiers pointing at the versioned profile endpoint, with the SMS/webhook claim
 > removed), and the public My Checks page no longer fabricates lake/reservoir history quoted in NTU
 > (now labelled three-river demonstration entries using the relative index).
+>
+> **Central suitability engine (2026-10-26).** Every water-use suitability decision is now
+> traceable to exactly four sensor values plus the intended use and its configured threshold
+> profile: `app/services/suitability_engine.py` rejects any other input (dissolved oxygen, ML
+> predictions, rainfall, location, history) with `ValueError`, both screening engines share one
+> canonical four-state vocabulary (`within_configured_ranges` / `caution` /
+> `outside_configured_ranges` / `insufficient_data`), and the state is persisted (`overall_state`,
+> migration `a9b0c1d2e3f4`) and served alongside the legacy status. Invalid, stale, unstable or
+> non-finite readings always collapse to `insufficient_data`. 49 new tests
+> (`tests/test_suitability_engine.py`); backend total 391, frontend 70, build and lint clean.
 
 ### 1. Close the privilege-escalation hole (minutes, highest urgency) — **DONE**
 `POST /api/auth/register` previously honoured a caller-supplied `role`. It now forces

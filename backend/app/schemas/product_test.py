@@ -58,6 +58,11 @@ class ReasonDetail(BaseModel):
 
 class OverallAssessment(BaseModel):
     status: str
+    # Canonical four-state vocabulary (within_configured_ranges | caution |
+    # outside_configured_ranges | insufficient_data) from the central
+    # suitability engine; null for assessments stored before it existed.
+    state: Optional[str] = None
+    state_label: Optional[str] = None
     label: str
     summary: str
     reasons: List[str]
@@ -127,6 +132,8 @@ class ProductTestAssessment(BaseModel):
     reading_mode: str
     reading_timestamp: Optional[datetime] = None
     readings: Dict[str, ReadingAssessment]
+    # Declared engine contract (accepted inputs, exclusions, data source).
+    engine: Optional[Dict[str, Any]] = None
     overall: OverallAssessment
     attention: List[AttentionItem]
     suitability: SuitabilityAssessment
@@ -155,6 +162,7 @@ class ProductWaterTestResponse(BaseModel):
     reading_timestamp: Optional[datetime] = None
     created_at: datetime
     overall_status: str
+    overall_state: Optional[str] = None
     overall_label: str
     criteria_version: str
     assessment: ProductTestAssessment
@@ -169,6 +177,7 @@ class ProductWaterTestSummary(BaseModel):
     intended_use_label: str
     reading_mode: str
     overall_status: str
+    overall_state: Optional[str] = None
     overall_label: str
     ph: Optional[float] = None
     tds: Optional[float] = None
