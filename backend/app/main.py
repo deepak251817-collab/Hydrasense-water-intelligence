@@ -1,9 +1,9 @@
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1 import api_v1_router
 from app.api.v1.simulation import start_simulation_poller, stop_simulation_poller
+from app.core.cors import configure_cors
 from app.core.config import settings
 from app.services.ml_service import ml_service
 from app.services.mqtt_service import mqtt_service
@@ -13,6 +13,10 @@ logger = logging.getLogger("hydrasense.main")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Startup: refuse to boot with a missing/insecure JWT secret (or, in
+    # production, an insecure default). Never generates a replacement key.
+    settings.validate_security()
+
     # Startup: load ML models safely (verify artifacts + feature contracts).
     # Never retrains; a missing artifact marks ML unavailable — ingestion
     # continues and readings keep NULL ML fields (no fabricated results).
@@ -65,14 +69,10 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Enable CORS for local development and frontend integration
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Explicit-origin CORS allowlist (env-driven). Replaces the old
+# allow_origins=["*"] + allow_credentials=True combination; production fails
+# closed until CORS_ALLOW_ORIGINS names the real frontend origins.
+configure_cors(app)
 
 app.include_router(api_v1_router, prefix="/api")
 

@@ -126,20 +126,30 @@
 
 ---
 
-## 6. Security and operations findings
+## 6. Security and operations
 
-These are real issues found by reading the code; they belong in the "limitations / future work"
-slide rather than being discovered by an examiner.
+### Resolved in this pass (security hardening, 2026-10-25)
+
+| Finding | Severity (before) | Resolution | Evidence |
+|---|---|---|---|
+| Self-service role selection | **High** | `register()` rejects any role other than `PRODUCT_USER` with 403; authority accounts only via seed/admin path | `tests/test_product_tests.py::test_public_registration_cannot_create_an_authority`, `tests/test_security_hardening.py::test_registration_cannot_escalate_to_authority` |
+| Permissive CORS | Medium | `allow_origins=["*"]` + credentials removed; explicit allowlist from `CORS_ALLOW_ORIGINS` (`app/core/cors.py`). Empty = local dev/preview origins outside production, deny-all in production. `*` rejected when credentials are enabled and in production | `tests/test_security_hardening.py` (7 CORS tests incl. trusted/untrusted middleware checks) |
+| Default JWT secret in code | Medium | `JWT_SECRET_KEY` has **no default**; startup raises when it is missing. Production also refuses short (<32 char) or known-insecure values; development only warns. Never generates a replacement key | `tests/test_security_hardening.py` (JWT tests incl. app-startup failure) |
+| No rate limiting | Low | Database-backed fixed-window limiter on `POST /api/auth/login` and `POST /api/auth/register`, returning **429 + `Retry-After`**. Counters live in the `rate_limit_counters` table (migration `e7f8a9b0c1d2`) so limits hold across workers and restarts | `tests/test_security_hardening.py` (within/beyond limit, disabled mode, shared-row persistence) |
+
+Configuration lives in `backend/.env.example` (`CORS_*`, `RATE_LIMIT_*`, `JWT_SECRET_KEY`).
+Run `alembic upgrade head` to create the rate-limit table.
+
+### Remaining limitations
 
 | Finding | Severity | Detail | Fix direction |
 |---|---|---|---|
-| Self-service role selection | **High** | `UserRegisterRequest.role` accepts `AUTHORITY`; anyone can `POST /api/auth/register` with `"role":"AUTHORITY"` and receive authority access | Force `PRODUCT_USER` in the endpoint; promote authorities via seed/DB only |
-| Permissive CORS | Medium | `allow_origins=["*"]` together with `allow_credentials=True` | Restrict to the real frontend origins |
-| Default JWT secret in code | Medium | `JWT_SECRET_KEY` defaults to a literal in `core/config.py`; tests trigger `InsecureKeyLengthWarning` | Require the env var in non-dev; fail fast when unset |
-| Public GET has a write side effect | Low | `/public/stations/{code}/suitability` persists assessment rows | Acceptable (idempotent unique constraint) but worth stating |
-| No rate limiting | Low | Login and public endpoints unthrottled | Add a gateway/limiter before any real deployment |
 | Tokens in `localStorage` | Low | XSS-exfiltratable | httpOnly cookie or short-lived tokens + refresh |
 | Demo credentials documented | Low | `authority@hydrasense.local / DemoAuthority123!` is seeded | Change before any deployment |
+| Public GET has a write side effect | Low | `/public/stations/{code}/suitability` persists assessment rows | Acceptable (idempotent unique constraint) but worth stating |
+| Rate limiting covers auth only | Low | `/auth/login` and `/auth/register` are throttled; public and authority endpoints are not, and no global gateway limit exists | Extend `rate_limit(...)` dependencies or add an edge/WAF rule before real deployment |
+| Rate-limit storage is PostgreSQL-only | Info | Counters use `SELECT ... FOR UPDATE` row locks; a non-PostgreSQL store would need its own atomic backend | Keep PostgreSQL, or swap in Redis if the stack ever moves |
+| Production configuration not verified | Info | The production CORS allowlist, `APP_ENV=production` secret, and proxy settings are code-verified only — no production deployment has been exercised | Verify on the real deployment before claiming production security |
 
 ---
 

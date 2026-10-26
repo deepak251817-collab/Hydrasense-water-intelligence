@@ -124,8 +124,10 @@ createdb hydrasense   # or: postgres -U postgres -c "CREATE DATABASE hydrasense"
 pip install -r requirements.txt
 
 cd backend
-cp .env.example .env          # set DATABASE_URL, JWT_SECRET_KEY, etc.
-alembic upgrade head          # create schema (incl. ML result columns)
+cp .env.example .env          # set DATABASE_URL, JWT_SECRET_KEY, CORS_ALLOW_ORIGINS, etc.
+                              # JWT_SECRET_KEY is REQUIRED: generate one with
+                              #   python -c "import secrets; print(secrets.token_urlsafe(48))"
+alembic upgrade head          # create schema (incl. ML columns + rate_limit_counters)
 python scripts/seed_demo.py   # demo authority account + water sources/stations
 python run_server.py          # http://127.0.0.1:8000  (docs at /docs)
 ```
@@ -139,9 +141,16 @@ Backend environment variables (`backend/.env`):
 | Variable | Default | Description |
 |---|---|---|
 | `DATABASE_URL` | `postgresql+psycopg2://postgres:postgres@localhost:5432/hydrasense` | PostgreSQL connection string |
-| `JWT_SECRET_KEY` | — | Set a secure value in production |
+| `APP_ENV` | `development` | `production` enables the strict security checks (CORS fail-closed, JWT secret enforced) |
+| `JWT_SECRET_KEY` | — (required) | **No default in code.** Generate with `python -c "import secrets; print(secrets.token_urlsafe(48))"` and keep it out of git. Startup fails when unset; in production it also fails when shorter than 32 chars or a known placeholder. Rotating it invalidates all issued tokens. |
 | `JWT_ALGORITHM` | `HS256` | JWT signing algorithm |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `60` | Token lifetime |
+| `CORS_ALLOW_ORIGINS` | empty | Comma-separated explicit frontend origins. Empty = local dev/preview origins outside production, deny-all cross-origin in production. `*` is rejected with credentials and in production. |
+| `CORS_ALLOW_CREDENTIALS` | `true` | Must be `false` if you ever try a `*` origin (the API refuses the combination) |
+| `RATE_LIMIT_ENABLED` | `true` | Database-backed limiter on `/api/auth/login` and `/api/auth/register` (429 + `Retry-After`) |
+| `RATE_LIMIT_TRUST_PROXY_HEADERS` | `false` | Set `true` only behind a reverse proxy you control (uses `X-Forwarded-For`) |
+| `RATE_LIMIT_LOGIN_MAX` / `RATE_LIMIT_LOGIN_WINDOW_SECONDS` | `10` / `300` | Login attempts per client per fixed window |
+| `RATE_LIMIT_REGISTER_MAX` / `RATE_LIMIT_REGISTER_WINDOW_SECONDS` | `10` / `3600` | Registration attempts per client per fixed window |
 | `MQTT_BROKER_HOST` / `MQTT_BROKER_PORT` | `localhost` / `1883` | Broker address |
 | `MQTT_TOPIC_PREFIX` | `hydrasense/stations` | Telemetry topic prefix |
 | `DEMO_STRICT_TDS_RULE` | `true` | Enables the project-specific <200 mg/L drinking-water TDS target. Set `false` to disable it; it never affects domestic, irrigation, swimming or aquaculture. |
@@ -595,11 +604,14 @@ This project deliberately constrains its claims:
 - **Low TDS is a project preference, not a safety verdict.** The <200 mg/L drinking-water flag is a demo rule. Low TDS alone does not make water unsafe, and high TDS alone does not identify which contaminants are present.
 - **Stability ≠ calibration.** A stable rolling window can still come from provisional sensors; live results with unverified calibration are reported as `INCONCLUSIVE`.
 - **Forecasting honesty.** The XGBoost deterioration target is a rule-based indicator on a single USGS station (~5 weeks synchronized); temporal performance drop from validation to test is documented, not tuned away.
+- **Security posture.** The code enforces an explicit CORS allowlist, requires an environment-supplied JWT secret, throttles login/registration with shared database counters, and blocks privilege escalation at registration — but **no production deployment has been verified**, so production security must still be confirmed on the real environment.
 - **No fabricated results.** Missing ML artifacts, failed inference, or pre-ML readings all produce NULL ML fields, rendered in the UI as "Analysis unavailable".
 - **Turbidity is not always NTU.** ESP32 hardware reports a **provisional relative index 0–100** anchored to two sample-based sensor voltages (≈0.354 V clear, ≈0.273 V cloudy). It is a relative trend indicator, **not** a calibrated NTU measurement and **not** a safety verdict; converting it to NTU requires the two-point calibration in [firmware/README.md](firmware/README.md) §10.
 - **Relative turbidity is excluded from ML.** The models were trained on NTU-style turbidity, so relative-index readings are stored and displayed but deliberately keep NULL ML fields — reported as “ML prediction unavailable for Turbidity Index readings.” rather than a silent gap. Data requirements for a future index-trained model are documented in [docs/TURBIDITY_INDEX_ML.md](docs/TURBIDITY_INDEX_ML.md).
 
 **Resolved in this pass**
+
+- **Security hardening (CORS, JWT secret, rate limiting, privilege escalation).** CORS is an explicit env-driven allowlist (`CORS_ALLOW_ORIGINS`) with no wildcard-plus-credentials combination and a fail-closed production default; `JWT_SECRET_KEY` has no code default and startup fails when it is missing (production also rejects short or known-insecure values, and no secret is ever auto-generated); login and registration are throttled by database-backed fixed-window counters (migration `e7f8a9b0c1d2`) returning 429 + `Retry-After`; public registration rejects any role other than `PRODUCT_USER`. Regression tests: `backend/tests/test_security_hardening.py` (30 tests).
 
 - **Simulation state is persistent and shared.** The previous per-process in-memory state was replaced by the `simulation_runs` singleton row (migration `c1d2e3f4a5b6`) with a per-worker generation lease: controls stay consistent across API workers and restarts, and no duplicate simulation loops can run.
 - **Alert thresholds are transparent.** Every alert number comes from one versioned, sourced profile that separates `official_standard` (BIS-cited) from `project_configured` (illustrative, requires local validation), served by `GET /api/product/alerts/profile` and shown in the UI; turbidity-index alerts are never compared with NTU limits.
@@ -610,7 +622,7 @@ This project deliberately constrains its claims:
 
 - **No probabilistic or trained forecasting model.** Only the Ridge baseline is implemented; there are no confidence intervals (the band is the holdout MAE), no exogenous inputs (e.g. rainfall), and parameters with short or non-predictable history report `unavailable` rather than numbers. Stations without enough stored history (currently `CAU-001`, `VRS-001`) show the readiness state instead of a forecast.
 - **No ML for turbidity-index readings.** No representative labelled index dataset exists yet, so the exclusion is retained by design; the training workflow is documented in [docs/TURBIDITY_INDEX_ML.md](docs/TURBIDITY_INDEX_ML.md).
-- **No incident/inspection workflow, rate limiting, or drift monitoring** — see [docs/FEATURE_STATUS.md](docs/FEATURE_STATUS.md) for the full open-findings table (security findings in §6 remain open unless listed above).
+- **No incident/inspection workflow or drift monitoring** — and rate limiting currently covers only the authentication endpoints (login/registration), not every public or authority route. See [docs/FEATURE_STATUS.md](docs/FEATURE_STATUS.md) §6 for the full open-findings table.
 
 ---
 

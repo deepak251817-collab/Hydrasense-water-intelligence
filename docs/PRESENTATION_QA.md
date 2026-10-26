@@ -275,11 +275,16 @@ They are excluded from threshold comparison; the data-quality block lists them u
 
 **38. What are the security weaknesses?**
 
-Stated plainly: the registration schema accepts a `role`, so a caller can self-register as
-`AUTHORITY`; CORS is `allow_origins=["*"]` with credentials enabled; the JWT secret has a literal
-default in `core/config.py`; there is no rate limiting or account lockout; tokens live in
-`localStorage`. Each has a fix direction in [FEATURE_STATUS.md §6](FEATURE_STATUS.md#6-security-and-operations-findings).
-Fixing the role issue is a five-line change and should be done before submission.
+Stated plainly, **as of the security hardening pass (2026-10-25) the four code-level issues are
+fixed**: public registration can no longer select a `role` (403 for anything but
+`PRODUCT_USER`); CORS is an explicit env-driven allowlist (`CORS_ALLOW_ORIGINS`) with no
+wildcard-plus-credentials combination and a fail-closed production default; `JWT_SECRET_KEY` has
+no literal default — startup fails when it is missing, and production also rejects short or
+known-insecure values; login and registration are rate-limited with database-backed counters
+(429 + `Retry-After`). **Still open:** no account lockout, tokens in `localStorage`, seeded demo
+credentials, rate limiting covers only the auth endpoints, and the production configuration has
+not been deployed or verified. Details in [FEATURE_STATUS.md §6](FEATURE_STATUS.md#6-security-and-operations)
+and `tests/test_security_hardening.py`.
 
 **39. How does the public page avoid leaking device internals?**
 

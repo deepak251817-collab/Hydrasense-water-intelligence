@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from app.core.database import get_db
+from app.core.rate_limit import rate_limit
 from app.core.security import get_password_hash, verify_password, create_access_token
 from app.models.user import User, UserRole
 from app.models.device import ProductDevice
@@ -11,8 +12,22 @@ from app.schemas.user import UserResponse
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
+# Shared, database-backed limits (PostgreSQL counters, configurable via
+# RATE_LIMIT_* settings) so brute-force attempts are throttled per client.
+login_rate_limit = rate_limit(
+    "auth:login", "RATE_LIMIT_LOGIN_MAX", "RATE_LIMIT_LOGIN_WINDOW_SECONDS"
+)
+register_rate_limit = rate_limit(
+    "auth:register", "RATE_LIMIT_REGISTER_MAX", "RATE_LIMIT_REGISTER_WINDOW_SECONDS"
+)
 
-@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+
+@router.post(
+    "/register",
+    response_model=UserResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(register_rate_limit)],
+)
 def register(request: UserRegisterRequest, db: Session = Depends(get_db)):
     # Check for duplicate email (emails are stored lower-cased)
     existing_user = db.query(User).filter(
@@ -76,7 +91,11 @@ def register(request: UserRegisterRequest, db: Session = Depends(get_db)):
     return new_user
 
 
-@router.post("/login", response_model=TokenResponse)
+@router.post(
+    "/login",
+    response_model=TokenResponse,
+    dependencies=[Depends(login_rate_limit)],
+)
 def login(request: UserLoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(
         func.lower(User.email) == request.email.strip().lower()

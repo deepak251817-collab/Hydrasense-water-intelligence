@@ -9,6 +9,16 @@ from sqlalchemy.orm import sessionmaker
 # Add backend directory to sys.path
 sys.path.insert(0, os.path.realpath(os.path.join(os.path.dirname(__file__), "..")))
 
+# The JWT signing secret must come from the environment (startup fails when it
+# is missing). Provide a clearly test-only value before the app is imported;
+# nothing here is ever used outside the test run.
+os.environ.setdefault(
+    "JWT_SECRET_KEY", "hydrasense-tests-only-signing-key-0123456789abcdef"
+)
+# Rate limits are exercised explicitly by tests/test_security_hardening.py so
+# that ordinary auth tests are not throttled by shared counters.
+os.environ.setdefault("RATE_LIMIT_ENABLED", "false")
+
 from app.main import app
 from app.core.database import Base, get_db
 from app.core.security import get_password_hash, create_access_token

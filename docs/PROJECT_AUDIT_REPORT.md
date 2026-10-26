@@ -157,19 +157,25 @@ Never start the backend with `python run_server.py`. Detailed setup: [README.md]
    live window (or a clearly labelled demo) and `POST /api/product/activate` binds codes with
    ownership checks; the Activate, check-water and history screens call them.
 7. **Hardware unverified**; pH/TDS uncalibrated by default; turbidity is a relative index, not NTU.
-8. **Security gaps**: role self-selection at registration, permissive CORS, default JWT secret, no
-   rate limiting, tokens in `localStorage`.
+8. **Security**: role self-selection and permissive CORS, the default JWT secret and missing rate
+   limiting are **fixed in this pass** (see §11 status note); still open: tokens in `localStorage`,
+   seeded demo credentials, auth-endpoint-only rate limiting, and an unverified production
+   configuration.
 9. **No coverage report, no E2E browser tests, no load tests** — quote test counts, never a coverage %.
 10. **Cleaning removed zero rows** — the datasets were already clean; the deliverable is the recipe
     and the audit, not a large cleanup count.
 
 ## 11. The five most important remaining tasks (ranked by urgency)
 
-> **Status update (2026-10-25).**
-> - **Task 1 — partially resolved.** Public registration now rejects any role other than
->   `PRODUCT_USER` with a 403 (regression-tested in `tests/test_product_tests.py`). The tail of the
->   task is still open: CORS remains `allow_origins=["*"]` with credentials, and the JWT secret
->   still defaults to a literal in code.
+> **Status update (2026-10-25, security hardening pass).**
+> - **Task 1 — resolved.** Public registration rejects any role other than `PRODUCT_USER` with a
+>   403 (regression-tested in `tests/test_product_tests.py` and
+>   `tests/test_security_hardening.py`). CORS is now an explicit env-driven allowlist
+>   (`backend/app/core/cors.py`): no wildcard with credentials, fail-closed in production.
+>   `JWT_SECRET_KEY` has no default in code — startup fails when it is missing, and production
+>   additionally fails on short or known-insecure values; no secret is ever auto-generated.
+>   Rate limiting was added on login and registration (429 + `Retry-After`, counters shared in
+>   PostgreSQL via migration `e7f8a9b0c1d2`). Production configuration itself is not yet verified.
 > - **Task 2 — open.** Dataset provenance (`SOURCES.md`, fetch script) not added.
 > - **Task 3 — open.** The Isolation Forest still ships on the tiny telemetry split; wording is
 >   guarded ("unusual sensor pattern", no detection claims) but no retraining happened.
@@ -186,13 +192,14 @@ Never start the backend with `python run_server.py`. Detailed setup: [README.md]
 > threshold profile, validated baseline forecasting with holdout gating, and the turbidity-index
 > ML exclusion message (workflow documented in `docs/TURBIDITY_INDEX_ML.md`).
 
-### 1. Close the privilege-escalation hole (minutes, highest urgency)
-`POST /api/auth/register` honours a caller-supplied `role`, so anyone can create an authority
-account. Force `PRODUCT_USER` in `register()` and create authority users only through the seed
-script or a deliberate admin path. Add a regression test that a `"role":"AUTHORITY"` payload still
-produces a product user. Also restrict CORS and require a non-default JWT secret outside development.
-**Why first:** it is a security defect in an otherwise defensible project, and it is the cheapest fix
-in this list.
+### 1. Close the privilege-escalation hole (minutes, highest urgency) — **DONE**
+`POST /api/auth/register` previously honoured a caller-supplied `role`. It now forces
+`PRODUCT_USER` (any other role gets 403) and authority users are created only through the seed
+script or a deliberate admin path, with regression tests. CORS is restricted to an explicit
+allowlist and a non-default `JWT_SECRET_KEY` is required, with startup failing securely when it
+is missing or (in production) insecure.
+**Why first:** it was a security defect in an otherwise defensible project, and it was the
+cheapest fix in this list.
 
 ### 2. Record dataset provenance and make data acquisition reproducible (hours)
 Add `ml/data/external/SOURCES.md` (URL, publisher, access date, license, row count, checksum) for
