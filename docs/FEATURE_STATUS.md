@@ -21,7 +21,7 @@
 | **Verified** | backend contracts, public QR page, auth, suitability, ML serving, evaluation transparency, product alerts + threshold profile, forecast readiness gates | MQTT handler, RBAC, ingestion-time assessment, `/public/*`, `/authority/ml/status`, `alerting.py`, `forecasting.py` |
 | **Implemented (manual check)** | 3 | ESP32 firmware, simulator scenarios, QR scanned from a phone over LAN |
 | **Partial** | 5 screens | command center, live monitoring board, station detail, analytics, water map |
-| **UI-only** | 9 screens | authority alerts/incidents/inspections/laboratory, water sources, nearby sources, warnings, public water check, public saved checks |
+| **UI-only** | 8 screens | incidents/inspections/laboratory (mock data, but banner-labelled prototypes), water sources, nearby sources, warnings, public water check, public saved checks |
 | **Not implemented** | 4 backends | incident workflow, inspection workflow, lab-record store, GIS map backend (the map canvas is a placeholder, not a backend) |
 
 > **Resolved since this audit** (see README *Scientific Honesty & Limitations* →
@@ -59,13 +59,14 @@
 | Public suitability endpoint | `GET /public/stations/{code}/suitability` | `test_water_suitability` public cases | **Verified** |
 | Password hashing (argon2 via `pwdlib`) | `core/security.py` | login tests | **Verified** |
 | Alert generation / notification | `app/services/alerting.py`, `alert_thresholds.py`, `GET /product/alerts`, `/product/alerts/profile` | `tests/test_simulation_and_alerts.py` (danger levels, index-vs-NTU, profile classification) | **Verified** |
-| Incident / inspection / lab-record APIs | — | no model, no route | **Not implemented** |
+| Authority station alerts endpoint | `GET /api/authority/alerts` (`authority.py`, shared `alerting.py`) | `tests/test_authority.py` (auth required, real stations, simulated labelling) | **Verified** |
+| Incident / inspection / lab-record APIs | — | no model, no route (pages banner-labelled as prototypes) | **Not implemented** |
 | Persistent simulation controls | `app/services/simulation_service.py`, `simulation_runs` (migration `c1d2e3f4a5b6`), `POST /simulation/start|pause|generate` | `tests/test_simulation_and_alerts.py` (restart-safe singleton, lease, seeded reproducibility) | **Verified** |
 | Baseline forecasting with readiness + evaluation gates | `app/services/forecasting.py`, `GET /authority/stations/{code}/forecast` | `tests/test_forecasting.py` (11 tests: insufficient data, holdout gate, horizon bounds, auth) | **Verified** |
 | Per-reading ML availability (index exclusion message) | `app/services/ml_availability.py`, analysis endpoints | `tests/test_ml_availability.py` | **Verified** |
 | Product-user reading submission (`POST /product/tests`, live window) | `app/api/v1/product.py`, `product_test_service.py` | `tests/test_product_tests.py` (stability, calibration, strict TDS rule) | **Verified** |
 | Device activation endpoint (`POST /product/activate`) | `app/api/v1/product.py` | `tests/test_product_tests.py::test_activate_unowned_product_code` + cases | **Verified** |
-| Rate limiting / account lockout | — | absent | **Not implemented** |
+| Rate limiting (auth endpoints) | `app/core/rate_limit.py`, `rate_limit_counters` (migration `e7f8a9b0c1d2`) | `tests/test_security_hardening.py` (429 within/beyond limit, disabled mode, shared-row persistence) | **Verified** — login/register only; no account lockout, no global gateway limit |
 
 ---
 
@@ -86,7 +87,8 @@
 | Station detail | `/authority/stations/:stationId` | **Partial (broken join)** | Page is keyed by mock ids (`source-tg-halli`), so `MlLatestCard` calls the real API with a mock id and gets 404 → "unavailable". Telemetry cards are not present here; `LiveMonitoring` is the real station view | **Partial** |
 | Water map | `/authority/map` | **Yes (data)** / placeholder (visual) | Fetches real stations; the map canvas is a styled placeholder ("Interactive GIS Placeholder — Mapbox Ready") | **Partial** |
 | Analytics | `/authority/analytics` | **Partial** | Source selector and trend chart are `mockData`; `ModelHealthCard` is real; `PredictionCard` is now a real forecast card (reads `GET /authority/stations/{code}/forecast`); the old fabricated SHAP grid was replaced by an honest evaluation explainer | **Partial** |
-| Alerts / Incidents / Inspections / Laboratory | `/authority/*` | **No** | `mockAlerts`, `mockIncidents`, `mockInspections`, `mockLabRecords`; acknowledge/reset is local state only | **UI-only** |
+| Authority alerts | `/authority/alerts` | **Yes** — `authorityApi.getAlerts` → `GET /api/authority/alerts` | Real alerts derived from each station's latest reading via the shared alerting service; loading / empty / error / session-expired states; acknowledgement is local-only | **Verified** |
+| Incidents / Inspections / Laboratory | `/authority/incidents`, `/authority/inspections`, `/authority/laboratory` | **No** — `mockIncidents`, `mockInspections`, `mockLabRecords` behind a visible `PrototypeBanner` naming the missing endpoints and stating lab records are not sensor measurements | Demonstration only | **UI-only (labelled prototype)** |
 | Water sources list | `/authority/sources` | **No** | `mockWaterSources` | **UI-only** |
 | Nearby sources / Warnings | `/public/sources`, `/public/warnings` | **No** | `mockWaterSources` | **UI-only** |
 | Public water check | `/public/check-water` | **No** | Client-side text generation from mock source risk; the `setTimeout` simulates analysis | **UI-only** |
@@ -165,6 +167,16 @@ Verification run in this pass: backend `342 passed`, ML `140 passed`, frontend `
 Verification: backend `391 passed` (342 + 49 new), frontend `vitest 70 passed`, `npm run build` exit 0,
 `npm run lint` 0 errors, `alembic current` = `a9b0c1d2e3f4` (head).
 
+### Resolved in this pass (final remediation, `feature/final-remediation`, 2026-10-28)
+
+| Area | What was enforced | Resolution | Evidence |
+|---|---|---|---|
+| Turbidity-unvalidated downgrade | pH and TDS passing could still surface a clean `WITHIN_PROJECT_TARGETS` verdict while turbidity was an uncalibrated relative index or missing | Any use whose profile rates turbidity (drinking, domestic, swimming, general) now caps the best result at `REVIEW_RECOMMENDED` (canonical `caution`) with an explicit warning naming the reason; `not_comparable`/`not_measured` turbidity can never read as a full pass | `water_screening._overall_status` + `assess()` warning; regression tests in `tests/test_product_tests.py`, `tests/test_product_screening.py`, `tests/test_simulation_and_alerts.py` |
+| Authority alerts were mock | `/authority/alerts` rendered `mockAlerts` with no backend | New `GET /api/authority/alerts` (authority-role, `get_current_authority`) derives alerts from each active station's latest stored reading via the shared `reading_alerts`/`alert_response` service, ordered newest-first, `limit` capped; frontend `Alerts.tsx` wired with loading/empty/error/unauthorized states and simulated labels preserved | `backend/app/api/v1/authority.py`; `tests/test_authority.py` (401 unauthenticated, real data, shape); frontend `npm run build`/`npm run lint` clean |
+| Prototype authority pages unlabelled | Incidents/Inspections/Laboratory rendered demonstration records with no indication they are not real workflows | Visible `PrototypeBanner` on all three pages naming the missing endpoints, marking records as demonstration, and stating laboratory entries are not four-sensor measurements | `frontend/src/components/authority/PrototypeBanner.tsx`; `Incidents.tsx`, `Inspections.tsx`, `Laboratory.tsx` |
+| Production configuration only hand-checked | No way to prove the fail-fast settings behave under a production-like config | `backend/scripts/verify_production_config.py` runs the static checklist (APP_ENV, JWT secret strength/uniqueness, CORS allowlist, rate limits, proxy trust, HS256, token lifetime, DB URL) with PASS/FAIL/REVIEW; paired with `tests/test_production_config.py`; README gained the deployment verification checklist | `python scripts/verify_production_config.py` runs and exits 1 on a dev `.env` (expected); `python -m pytest tests/test_production_config.py` |
+| Legacy schema drift undocumented | `alembic check` fails on legacy tables/columns with no written analysis | Exact drift inventoried in README (*Database schema drift*): tables `water_tests`, `water_test_assessments`, `water_test_predictions` + indexes and columns `product_devices.device_name`/`expires_at`; grep proves no application code references them; no drops, no history rewrite | `alembic check` output captured; `alembic current` = `a9b0c1d2e3f4` (head) |
+
 ### Remaining limitations
 
 | Finding | Severity | Detail | Fix direction |
@@ -174,10 +186,12 @@ Verification: backend `391 passed` (342 + 49 new), frontend `vitest 70 passed`, 
 | Public GET has a write side effect | Low | `/public/stations/{code}/suitability` persists assessment rows | Acceptable (idempotent unique constraint) but worth stating |
 | Rate limiting covers auth only | Low | `/auth/login` and `/auth/register` are throttled; public and authority endpoints are not, and no global gateway limit exists | Extend `rate_limit(...)` dependencies or add an edge/WAF rule before real deployment |
 | Rate-limit storage is PostgreSQL-only | Info | Counters use `SELECT ... FOR UPDATE` row locks; a non-PostgreSQL store would need its own atomic backend | Keep PostgreSQL, or swap in Redis if the stack ever moves |
-| Production configuration not verified | Info | The production CORS allowlist, `APP_ENV=production` secret, and proxy settings are code-verified only — no production deployment has been exercised | Verify on the real deployment before claiming production security |
-| Authority prototype pages still mock | Medium | Incidents, Inspections and Laboratory render demonstration content with no backend endpoints; Command Center, Live Monitoring's top board, Water Sources and parts of Station Detail still mix mock data | Wire them to the existing endpoints or label each page "prototype" in the UI |
+| Production configuration not verified | Info | The production CORS allowlist, `APP_ENV=production` secret, and proxy settings are now covered by `scripts/verify_production_config.py` + `tests/test_production_config.py`, but those are **local static checks** — no production deployment has been exercised | Run the README *Deployment verification checklist* on the real environment before claiming production security |
+| Authority prototype pages still mock | Medium | Incidents, Inspections and Laboratory now carry a visible prototype banner naming the missing endpoints, but they still render `mockData` with no backend; Command Center, Live Monitoring's top board, Water Sources and parts of Station Detail still mix mock data | Build the incident/inspection/lab endpoints or remove the pages from navigation |
 | Public check history not persisted | Low | The public (unauthenticated) My Checks page shows clearly-labelled demonstration entries — there is no endpoint storing public check history | Persist public checks or drop the page from navigation |
 | No index-trained ML model / no probabilistic forecast | Info | Holdout MAE is an evaluation measure, not a prediction interval; turbidity-index readings keep the explicit "ML prediction unavailable" status | Paired index + reference-labelled data required before an index model; more history before stronger forecasts |
+| Intentional schema drift open | Info | `alembic check` still fails: legacy `water_tests` / `water_test_assessments` / `water_test_predictions` tables and `product_devices.device_name`/`expires_at` columns exist in the database but not in the models (verified unreferenced; documented in README) | Write a reviewed migration only if the historical rows are expendable — never autogenerate-and-apply blindly |
+| Alerts acknowledgement not persisted | Low | Acknowledging an alert is local UI state; there is no alert history, SMS or webhook dispatch | Add an `alert_events` table + acknowledge endpoint if persistence is needed |
 
 ---
 

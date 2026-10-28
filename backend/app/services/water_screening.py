@@ -120,6 +120,12 @@ _LIMITATION_NOT_CERTIFIED = (
     "pesticide parameters are not measured; no result certifies potability."
 )
 
+# Uses whose profile rates turbidity: for these, an unvalidated turbidity
+# reading (relative index without NTU calibration, or no value at all) caps the
+# best possible overall result at REVIEW_RECOMMENDED (canonical `caution`) so
+# that "pH and TDS pass" is never presented as "all requirements passed".
+TURBIDITY_RATED_USES = frozenset({"drinking", "domestic", "swimming", "general"})
+
 
 @dataclass(frozen=True)
 class ScreeningCriteria:
@@ -554,10 +560,11 @@ def _overall_status(
             tds["status"] in ("above_acceptable", "below_project_target")
             or turbidity["status"] == "above_acceptable"
         ):
-            return "REVIEW_RECOMMENDED"
-        return "WITHIN_PROJECT_TARGETS"
+            base = "REVIEW_RECOMMENDED"
+        else:
+            base = "WITHIN_PROJECT_TARGETS"
 
-    if intended_use == "domestic":
+    elif intended_use == "domestic":
         if (
             tds["status"] == "above_permissible"
             or turbidity["status"] == "above_permissible"
@@ -568,17 +575,18 @@ def _overall_status(
             tds["status"] == "above_acceptable"
             or turbidity["status"] == "above_acceptable"
         ):
-            return "REVIEW_RECOMMENDED"
-        return "WITHIN_PROJECT_TARGETS"
+            base = "REVIEW_RECOMMENDED"
+        else:
+            base = "WITHIN_PROJECT_TARGETS"
 
-    if intended_use == "irrigation":
+    elif intended_use == "irrigation":
         if tds["status"] == "severe_restriction":
             return "NOT_RECOMMENDED_BY_SCREENING"
         # Other required irrigation criteria (EC, SAR, boron) are not measured,
         # so even a favourable TDS/pH result can only recommend review.
         return "REVIEW_RECOMMENDED"
 
-    if intended_use == "swimming":
+    elif intended_use == "swimming":
         if (
             ph["status"] in ("below_reference", "above_reference")
             or turbidity["status"] in ("above_acceptable", "above_permissible")
@@ -586,9 +594,9 @@ def _overall_status(
             return "NOT_RECOMMENDED_BY_SCREENING"
         # Microbiology/oxygen demand are not measured; safe swimming cannot be
         # certified, so the best possible state is review.
-        return "REVIEW_RECOMMENDED"
+        base = "REVIEW_RECOMMENDED"
 
-    if intended_use == "general":
+    elif intended_use == "general":
         # General non-potable use (cleaning, gardening, cooling, construction):
         # only the measured four are screened, and TDS carries no pass/fail for
         # this use, so a concern in pH or turbidity drives the result.
@@ -597,9 +605,23 @@ def _overall_status(
             or turbidity["status"] in ("above_acceptable", "above_permissible")
         ):
             return "NOT_RECOMMENDED_BY_SCREENING"
-        return "WITHIN_PROJECT_TARGETS"
+        base = "WITHIN_PROJECT_TARGETS"
+    else:
+        return "INCONCLUSIVE"
 
-    return "INCONCLUSIVE"
+    # Turbidity-unvalidated cap: a use that rates turbidity can never reach a
+    # clean "within configured ranges" verdict when turbidity itself could not
+    # be validated (relative index without NTU calibration, or not measured).
+    # pH and TDS passing is reported as a CAUTION with the exact reason, not as
+    # a full pass.
+    if (
+        intended_use in TURBIDITY_RATED_USES
+        and turbidity["status"] in ("not_comparable", "not_measured")
+        and base == "WITHIN_PROJECT_TARGETS"
+    ):
+        return "REVIEW_RECOMMENDED"
+
+    return base
 
 
 def _summary(
@@ -1207,6 +1229,19 @@ def assess(
     )
 
     warnings = list(validation["warnings"])
+    if (
+        intended_use in TURBIDITY_RATED_USES
+        and turbidity_eval["status"] in ("not_comparable", "not_measured")
+        and status != "INCONCLUSIVE"
+    ):
+        warnings.insert(
+            0,
+            "Turbidity could not be validated "
+            "(relative turbidity index — NTU calibration required, or no value "
+            "reported), so pH and TDS passing their screening rules is reported "
+            "as a caution — not as a full pass. See the turbidity entry for the "
+            "exact reason.",
+        )
     if reading_mode == "demo":
         warnings.insert(
             0,

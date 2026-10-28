@@ -503,13 +503,17 @@ def _screen(**overrides):
         "turbidity": 18.0,
         "temperature": 25.0,
     }
+    turbidity_unit = overrides.pop("turbidity_unit", "relative_index_0_100")
+    calibration = overrides.pop("calibration", None)
     readings.update(overrides)
     kwargs = dict(
         intended_use="general",
         reading_mode="demo",
         reading_timestamp=NOW,
-        turbidity_unit="relative_index_0_100",
+        turbidity_unit=turbidity_unit,
     )
+    if calibration is not None:
+        kwargs["calibration"] = calibration
     return assess(readings, **kwargs)
 
 
@@ -518,17 +522,33 @@ class TestGeneralNonPotableUse:
         assert USE_LABELS["general"] == "General Non-Potable Use"
 
     def test_within_ranges_but_never_certified(self):
-        result = _screen()
+        # Validated (NTU-calibrated) turbidity — the only way a clean pass is
+        # reachable — still never reads as a certification.
+        result = _screen(
+            turbidity=0.5,
+            turbidity_unit="ntu",
+            calibration={"ph": "calibrated", "tds": "calibrated",
+                         "turbidity": "calibrated", "temperature": "calibrated"},
+        )
         assert result["overall"]["status"] == "WITHIN_PROJECT_TARGETS"
         summary = result["overall"]["summary"]
         assert "within the configured general" in summary
         assert "not a safety certification" in summary
 
+    def test_unvalidated_index_turbidity_caps_the_result_at_caution(self):
+        # Same readings, but turbidity is an unvalidated relative index: the
+        # result can no longer be a clean pass.
+        result = _screen()
+        assert result["readings"]["turbidity"]["status"] == "not_comparable"
+        assert result["overall"]["status"] == "REVIEW_RECOMMENDED"
+
     def test_strict_drinking_tds_target_is_not_applied(self):
         # 150 mg/L is below the drinking-only <200 ppm demo target.
         result = _screen(tds=150.0)
         assert result["readings"]["tds"]["status"] == "informational"
-        assert result["overall"]["status"] == "WITHIN_PROJECT_TARGETS"
+        # Caution comes from the unvalidated turbidity index, never from a TDS
+        # rule: the drinking-only strict target is not applied here.
+        assert result["overall"]["status"] == "REVIEW_RECOMMENDED"
         assert "strict" not in result["overall"]["summary"].lower()
 
     def test_ph_danger_is_unfavourable(self):

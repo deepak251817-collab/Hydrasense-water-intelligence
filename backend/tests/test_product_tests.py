@@ -107,6 +107,7 @@ def add_stable_window(
     count=10,
     spacing_seconds=3,
     latest_age_seconds=6,
+    turbidity_step=0.2,
 ):
     """Store a stable rolling window (10 samples over 27 s by default)."""
 
@@ -120,7 +121,7 @@ def add_stable_window(
                 device_id,
                 ph=ph + (index - count / 2) * 0.002,
                 tds=tds + (index - count / 2) * 0.4,
-                turbidity=turbidity + (index - count / 2) * 0.2,
+                turbidity=turbidity + (index - count / 2) * turbidity_step,
                 temperature=temperature + (index - count / 2) * 0.02,
                 turbidity_unit=turbidity_unit,
                 age_seconds=age,
@@ -345,6 +346,11 @@ def test_live_calibrated_stable_window_can_pass(
         db_session,
         seeded_water_data["station"].id,
         active_device.device_id,
+        # A genuinely NTU-calibrated turbidity sensor: the only way turbidity
+        # can be validated, so a clean pass is reachable at all.
+        turbidity=0.8,
+        turbidity_unit="ntu",
+        turbidity_step=0.02,  # NTU tolerance is 0.2 — keep the window stable
         calibration="calibrated",
     )
     response = client.post(
@@ -458,8 +464,11 @@ def test_demo_test_is_clearly_labelled_and_works_offline(
 @pytest.mark.parametrize(
     "use,standard,result",
     [
-        ("drinking", "BIS-IS-10500:2012", "WITHIN_PROJECT_TARGETS"),
-        ("domestic", "BIS-IS-10500:2012", "WITHIN_PROJECT_TARGETS"),
+        # Demo device readings carry a relative turbidity index (no NTU
+        # calibration), so the best result for turbidity-rated uses is a
+        # caution — never a full pass.
+        ("drinking", "BIS-IS-10500:2012", "REVIEW_RECOMMENDED"),
+        ("domestic", "BIS-IS-10500:2012", "REVIEW_RECOMMENDED"),
         ("irrigation", "FAO-TDS-PH", "REVIEW_RECOMMENDED"),
         ("swimming", "CPCB-DBU-B", "REVIEW_RECOMMENDED"),
         ("aquaculture", "AQUACULTURE-NO-CONFIGURED-CRITERIA", "INCONCLUSIVE"),

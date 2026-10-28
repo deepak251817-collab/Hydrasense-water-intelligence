@@ -152,6 +152,48 @@ def get_station_suitability(
     )
 
 
+@router.get("/alerts")
+def list_station_alerts(
+    limit: int = Query(50, ge=1, le=100),
+    current_user: User = Depends(get_current_authority),
+    db: Session = Depends(get_db),
+):
+    """Danger-level alerts across all monitoring stations.
+
+    Derived from each active station's latest stored reading through the
+    shared alerting service (the same versioned threshold profile used by
+    product-user alerts). Nothing is fabricated: hardware readings and
+    labelled simulations stay distinguishable via each alert's ``source`` /
+    ``simulated`` fields, and stations without readings produce no alerts.
+    """
+    from app.services.alerting import alert_response, reading_alerts
+
+    now = datetime.now(timezone.utc)
+    stations = (
+        db.query(MonitoringStation)
+        .filter(MonitoringStation.is_active.is_(True))
+        .order_by(MonitoringStation.station_code.asc())
+        .all()
+    )
+
+    items: List[dict] = []
+    for station in stations:
+        reading = (
+            db.query(SensorReading)
+            .filter(SensorReading.station_id == station.id)
+            .order_by(SensorReading.timestamp.desc(), SensorReading.id.desc())
+            .first()
+        )
+        for alert in reading_alerts(reading, now=now):
+            alert["station_code"] = station.station_code
+            alert["station_name"] = station.station_name
+            items.append(alert)
+
+    # Most recent first, capped by the requested limit; the response also
+    # carries the active threshold profile (official vs project-configured).
+    return alert_response(items, limit)
+
+
 @router.get("/stations/{station_code}/live-assessment", response_model=LiveAssessmentResponse)
 def get_live_water_assessment(
     station_code: str,

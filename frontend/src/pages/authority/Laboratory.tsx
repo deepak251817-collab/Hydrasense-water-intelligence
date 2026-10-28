@@ -1,9 +1,17 @@
 import { mockLabRecords } from "../../data/mockData";
+import PrototypeBanner from "../../components/authority/PrototypeBanner";
 import { FlaskConical, CheckCircle2, Clock, ShieldCheck } from "lucide-react";
 
 export default function Laboratory() {
   return (
     <div className="space-y-6">
+      <PrototypeBanner
+        feature="Laboratory records"
+        missing="Needed to make this real: a lab-results model with sample
+        chain-of-custody, uploads of instrument output entered by authorised users, and an
+        explicit rule that laboratory values are never derived from the four hardware
+        sensors."
+      />
       {/* Header */}
       <div>
         <div className="inline-flex items-center gap-2 rounded-full bg-cyan-50 px-2.5 py-1 text-xs font-bold text-cyan-800 border border-cyan-200">

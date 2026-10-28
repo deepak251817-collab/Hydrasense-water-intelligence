@@ -1,4 +1,5 @@
 import { mockIncidents } from "../../data/mockData";
+import PrototypeBanner from "../../components/authority/PrototypeBanner";
 import { Flame, Clock, Users } from "lucide-react";
 
 export default function Incidents() {
@@ -30,6 +31,12 @@ export default function Incidents() {
 
   return (
     <div className="space-y-6">
+      <PrototypeBanner
+        feature="Incidents"
+        missing="Needed to make this real: an incidents database model, authoring and
+        assignment endpoints with AUTHORITY-only writes, status transitions with audit
+        timestamps, and links from each alert to its triggering reading."
+      />
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>

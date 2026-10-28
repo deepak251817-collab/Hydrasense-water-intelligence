@@ -267,8 +267,12 @@ def _seed_station_with_reading(db_session, reading):
 @pytest.fixture
 def station_with_calibrated_reading(db_session, seeded_water_data):
     station = seeded_water_data["station"]
+    # Timestamp at *fixture* time, not module-import time: the API assesses
+    # freshness against the real clock at request time, and a full-suite run
+    # can reach this fixture minutes after import (NOW would read "delayed").
     reading = make_reading(
         station.id, ph=7.2, tds=300.0, turbidity=0.5, turbidity_unit="ntu",
+        timestamp=datetime.now(timezone.utc),
         diagnostics=calibrated_diag(ph="calibrated", tds="calibrated", turbidity="calibrated"),
     )
     _seed_station_with_reading(db_session, reading)
@@ -359,13 +363,18 @@ class TestAuthoritySuitabilityAPI:
     def test_new_reading_produces_new_assessment_set(
         self, client, db_session, authority_token_headers, station_with_calibrated_reading
     ):
-        station, _ = station_with_calibrated_reading
+        station, first = station_with_calibrated_reading
         url = f"/api/authority/stations/{station.station_code}/suitability"
         client.get(url, headers=authority_token_headers)
 
+        # Strictly newer than the fixture reading (which is stamped at fixture
+        # time, not at the module's NOW), so it becomes the latest reading.
+        first_ts = first.timestamp
+        if first_ts.tzinfo is None:  # SQLite hands back naive UTC
+            first_ts = first_ts.replace(tzinfo=timezone.utc)
         second = make_reading(
             station.id, ph=9.5, tds=300.0, turbidity=0.5, turbidity_unit="ntu",
-            timestamp=NOW + timedelta(seconds=5),
+            timestamp=first_ts + timedelta(seconds=5),
             diagnostics=calibrated_diag(ph="calibrated", tds="calibrated", turbidity="calibrated"),
         )
         _seed_station_with_reading(db_session, second)

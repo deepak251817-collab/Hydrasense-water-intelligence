@@ -61,10 +61,12 @@ Verified by executing code or tests in this checkout:
 | Authority command centre (stations + ML summary) | ✅ (rest of the page 🧪) |
 | Water map | ✅ stations, 🕳 map canvas |
 | Analytics | 🧪 selectors, ✅ model health, 🕳 SHAP |
-| Alerts / Incidents / Inspections / Laboratory / Sources | 🧪 |
+| Authority alerts (station danger-level alerts) | ✅ `GET /api/authority/alerts` (acknowledgement still local) |
+| Incidents / Inspections / Laboratory | 🧪 demo records behind a visible prototype banner (no endpoints) |
+| Water sources | 🧪 |
 | Station detail | 🧪 keyed by mock ids (real ML card 404s) |
 | Public check-water / nearby sources / warnings / my checks | 🧪 |
-| User check-water / history / activate | 🧪 |
+| User check-water / history / activate | ✅ (`POST /product/tests`, `GET /product/tests`, `POST /product/activate`) |
 
 Full matrix: [FEATURE_STATUS.md](FEATURE_STATUS.md).
 
@@ -149,10 +151,12 @@ Never start the backend with `python run_server.py`. Detailed setup: [README.md]
    rate, no ground-truth labels.
 2. **Benchmark provenance missing** and the label is a deterministic rule; field accuracy unknown.
 3. **XGBoost is offline only**, single station, ~5 weeks, balanced accuracy 0.54.
-4. **Much of the authority dashboard is mock UI** (five pages, plus the top board of Live Monitoring); station detail is keyed by mock ids. *(Alerts threshold card corrected in the validation pass — it no longer claims DO/NTU/AI-risk triggers.)*
-5. **Incident, inspection, lab and notification backends are missing**; those pages are
-   prototypes. (Alerting **was added**: `GET /api/product/alerts` + a versioned threshold profile
-   that separates official BIS values from project-configured ones.)
+4. **Much of the authority dashboard is mock UI** (command centre KPIs, five-page remnants, the top board of Live Monitoring); station detail is keyed by mock ids. *(Alerts threshold card corrected in the validation pass, and the Alerts page itself is now served by the real `GET /api/authority/alerts`.)*
+5. **Incident, inspection, lab and notification backends are missing**; those three pages are
+   prototypes and now say so in a visible banner (demonstration records only; laboratory entries
+   are not four-sensor measurements). (Alerting **was added**: `GET /api/product/alerts` + a
+   versioned threshold profile that separates official BIS values from project-configured ones,
+   plus the authority-wide `GET /api/authority/alerts`.)
 6. **Product-user reading submission is implemented** — `POST /api/product/tests` accepts a stable
    live window (or a clearly labelled demo) and `POST /api/product/activate` binds codes with
    ownership checks; the Activate, check-water and history screens call them.
@@ -210,6 +214,29 @@ Never start the backend with `python run_server.py`. Detailed setup: [README.md]
 > migration `a9b0c1d2e3f4`) and served alongside the legacy status. Invalid, stale, unstable or
 > non-finite readings always collapse to `insufficient_data`. 49 new tests
 > (`tests/test_suitability_engine.py`); backend total 391, frontend 70, build and lint clean.
+>
+> **Final remediation (2026-10-28, `feature/final-remediation`).**
+> - **Turbidity honesty in the product engine:** any purpose whose profile rates turbidity
+>   (drinking, domestic, swimming, general) now caps its best result at `REVIEW_RECOMMENDED`
+>   (canonical `caution`) when turbidity is an uncalibrated relative index or missing, with an
+>   explicit warning — “pH and TDS passing their screening rules is reported as a caution, not as
+>   a full pass”. Regression tests added in `test_product_tests.py`, `test_product_screening.py`
+>   and `test_simulation_and_alerts.py`.
+> - **Authority alerts are real:** new `GET /api/authority/alerts` (authority-role only) derives
+>   danger-level alerts from each station’s latest stored reading through the shared alerting
+>   service; `Alerts.tsx` was rewired off `mockAlerts` with loading / empty / error /
+>   session-expired states. Temperature remains contextual; index values are never compared with
+>   NTU limits; simulated rows keep their labels.
+> - **Prototype labelling:** Incidents, Inspections and Laboratory now show a `PrototypeBanner`
+>   naming the missing endpoints and stating that lab records are demonstration data, not
+>   four-sensor measurements.
+> - **Production-config tooling:** `scripts/verify_production_config.py` +
+>   `tests/test_production_config.py` (local static checks only) and a README deployment
+>   verification checklist; deployment security remains **UNVERIFIED**.
+> - **Schema drift documented, not dropped:** `alembic check` failure analysed — legacy
+>   `water_tests` / `water_test_assessments` / `water_test_predictions` tables and retired
+>   `product_devices.device_name` / `expires_at` columns are unreferenced by application code
+>   (grep-verified) and intentionally kept; migration history untouched, head = `a9b0c1d2e3f4`.
 
 ### 1. Close the privilege-escalation hole (minutes, highest urgency) — **DONE**
 `POST /api/auth/register` previously honoured a caller-supplied `role`. It now forces

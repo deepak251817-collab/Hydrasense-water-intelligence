@@ -96,6 +96,31 @@ def test_hidden_parameters_cannot_change_the_result():
 # ---------------------------------------------------------------------------
 
 
+def test_unvalidated_turbidity_caps_a_drinking_pass_at_caution():
+    """pH and TDS passing with an unvalidated index is never a full pass."""
+    result = evaluate()
+    assert result["readings"]["ph"]["status"] == "within_range"
+    assert result["readings"]["tds"]["status"] == "within_range"
+    assert result["readings"]["turbidity"]["status"] == "not_comparable"
+    assert state_of(result) == CAUTION
+    assert any("NTU calibration required" in warning
+               for warning in result["data_quality"]["warnings"])
+
+
+def test_validated_ntu_turbidity_allows_a_full_pass():
+    calibrated = {
+        "ph": "calibrated", "tds": "calibrated",
+        "turbidity": "calibrated", "temperature": "calibrated",
+    }
+    result = evaluate(
+        readings={"turbidity": 0.5},
+        turbidity_unit="ntu",
+        calibration=calibrated,
+        stability={"stable": True, "status": "stable", "message": ""},
+    )
+    assert state_of(result) == WITHIN
+
+
 def test_result_carries_canonical_state_and_label():
     result = evaluate()
     assert state_of(result) in STATE_LABELS
@@ -132,17 +157,19 @@ def test_real_mode_is_labelled_real_sensor():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("ph,expected", [(7.2, WITHIN), (6.5, WITHIN), (8.5, WITHIN),
+@pytest.mark.parametrize("ph,expected", [(7.2, CAUTION), (6.5, CAUTION), (8.5, CAUTION),
                                          (6.4, OUTSIDE), (8.6, OUTSIDE)])
 def test_ph_boundary_changes_state(ph, expected):
+    # With the default relative-index turbidity the best possible state is
+    # CAUTION (unvalidated-turbidity cap); pH still drives OUTSIDE when it fails.
     assert state_of(evaluate(readings={"ph": ph})) == expected
 
 
 @pytest.mark.parametrize("tds,expected", [
     (100.0, CAUTION),      # below the project strict TDS target
-    (200.0, WITHIN),       # exactly at the strict target
-    (300.0, WITHIN),
-    (500.0, WITHIN),       # exactly at the acceptable reference
+    (200.0, CAUTION),      # at the strict target; turbidity unvalidated => caution
+    (300.0, CAUTION),
+    (500.0, CAUTION),      # at the acceptable reference; turbidity unvalidated
     (501.0, CAUTION),      # above acceptable, investigation
     (2000.0, CAUTION),     # at the permissible reference
     (2001.0, OUTSIDE),     # above the permissible reference
@@ -155,7 +182,7 @@ def test_temperature_has_no_rule_and_never_changes_state():
     """No purpose configures a temperature pass/fail limit — context only."""
     cold = evaluate(readings={"temperature": 5.0})
     warm = evaluate(readings={"temperature": 45.0})
-    assert state_of(cold) == state_of(warm) == WITHIN
+    assert state_of(cold) == state_of(warm)
     assert cold["readings"]["temperature"]["status"] == "informational"
 
 
@@ -256,8 +283,10 @@ def test_purposes_apply_their_own_profiles():
     readings = {"tds": 600.0}
     drinking = evaluate(readings=readings, intended_use="drinking")
     general = evaluate(readings=readings, intended_use="general")
-    assert state_of(drinking) == CAUTION      # above the 500 mg/L reference
-    assert state_of(general) == WITHIN        # TDS has no pass/fail for this use
+    # Both caution, but for different reasons: drinking names the TDS
+    # reference, general carries no TDS pass/fail at all.
+    assert state_of(drinking) == CAUTION
+    assert state_of(general) == CAUTION
     assert general["readings"]["tds"]["status"] == "informational"
 
 

@@ -1044,9 +1044,41 @@ export interface ForecastResponse {
 }
 
 // Authority API (requires AUTHORITY JWT)
+/** One alert derived from a stored station reading (shared alerting service). */
+export interface StationAlert {
+  parameter: string;
+  label: string;
+  value: number | null;
+  unit: string;
+  severity: "critical" | "warning";
+  title: string;
+  message: string;
+  reference: string;
+  next_step: string;
+  timestamp: string;
+  source: string;
+  simulated: boolean;
+  threshold_classification?: string | null;
+  threshold_profile_version?: string | null;
+  station_code?: string;
+  station_name?: string;
+}
+
+export interface StationAlertsResponse {
+  total: number;
+  items: StationAlert[];
+  critical_count: number;
+  warning_count: number;
+  threshold_profile?: Record<string, unknown>;
+}
+
 export const authorityApi = {
   getProfile: (token: string) =>
     apiGetAuth<User>("/authority/me", token),
+
+  /** Danger-level alerts across all stations (authority-only). */
+  getAlerts: (token: string, limit = 50) =>
+    apiGetAuth<StationAlertsResponse>(`/authority/alerts?limit=${limit}`, token),
 
   getAllStations: (token: string) =>
     apiGetAuth<MonitoringStation[]>("/authority/stations", token),

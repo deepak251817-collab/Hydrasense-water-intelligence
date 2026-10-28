@@ -593,6 +593,62 @@ ML analysis responses contain `anomaly_label` (0 = normal, 1 = anomalous conditi
 
 ---
 
+## Production Configuration & Deployment Verification
+
+**Local static checks** (these inspect configuration only — they never reach a deployed
+environment):
+
+```bash
+cd backend
+python scripts/verify_production_config.py   # PASS/FAIL/REVIEW checklist, exit 1 on any FAIL
+```
+
+It runs the application's own fail-fast checks (JWT secret present, strong and not a known
+placeholder; production-like `APP_ENV`; CORS allowlist populated) plus static settings checks
+(rate limits configured, proxy-header trust off, HS256, token lifetime, non-default database
+URL). Against a development `.env` it intentionally reports FAILs — that is correct: those
+checks are meant to be run with the *production* environment variables. The same checks are
+covered by `backend/tests/test_production_config.py`.
+
+> **Deployment security is UNVERIFIED.** The script is a local, static check. It cannot probe a
+> real deployment, so nothing below may be claimed as verified until this checklist has been
+> exercised against the actual environment:
+
+**Deployment verification checklist (run on the real environment):**
+
+1. `APP_ENV=production` and a freshly generated `JWT_SECRET_KEY` (≥ 32 chars, e.g.
+   `python -c "import secrets; print(secrets.token_urlsafe(48))"`) supplied through the
+   environment/secret manager — **never** committed, never logged, never echoed in an API
+   response. Rotate by redeploying with a new value (all sessions invalidate).
+2. `python scripts/verify_production_config.py` exits 0 with the production environment loaded.
+3. `alembic upgrade head` applied to the production database; `alembic current` = `head`.
+4. CORS: `CORS_ALLOW_ORIGINS` lists only the real frontend origin(s); verify from a real browser
+   that the frontend origin is allowed and an arbitrary origin receives no CORS headers.
+5. Auth round-trip on the real host: register → login → authorized call → logout; confirm
+   unauthenticated calls to `/api/authority/*` return 401 and product users get 403.
+6. Rate limiting observed live: hammer `POST /api/auth/login` and confirm **429** with
+   `Retry-After` (and that no password/token ever appears in logs).
+7. TLS terminated at the proxy, `RATE_LIMIT_TRUST_PROXY_HEADERS=true` only behind a proxy you
+   control, and no secrets in logs, error pages or the OpenAPI schema.
+8. Seeded demo credentials changed before any real users exist.
+
+### Database schema drift (intentional, verified — no drops)
+
+`alembic check` reports drift because the deployed database still contains **legacy tables and
+columns that the SQLAlchemy models intentionally no longer map to**. Verified on 2026-10-28:
+
+| Drift | What it is | Why it is kept |
+|---|---|---|
+| Tables `water_tests`, `water_test_assessments`, `water_test_predictions` (+ their indexes) | The original product water-test schema, superseded by `product_water_tests` (migration `f6a7b8c9d0e1`) | They hold historical records; a grep of `backend/app` finds **no reference** to them (only `product_water_tests` is used). Dropping would destroy data to silence a warning. |
+| Columns `product_devices.device_name`, `product_devices.expires_at` | Earlier device columns; the API now serves a constant `DEVICE_NAME` and stores activation/expiry elsewhere | The `ProductDevice` model has no such attributes, so nothing reads them; harmless and reversible only by a dedicated migration. |
+
+No migration drops or rewrites any of this: migration history is untouched and `alembic
+upgrade head` still lands on `a9b0c1d2e3f4`. If you ever want to reclaim the space, write an
+explicit, reviewed migration after confirming the rows are expendable — do not run
+`alembic revision --autogenerate` output that contains `drop_table`/`drop_column` blindly.
+
+---
+
 ## Scientific Honesty & Limitations
 
 This project deliberately constrains its claims:
@@ -615,6 +671,30 @@ This project deliberately constrains its claims:
 - **Validation pass — dashboard honesty.** The authority **Alerts** page threshold card no longer claims dissolved-oxygen, NTU or "AI risk" triggers: it shows the four-sensor project-configured tiers (turbidity index bands, TDS references, pH range), links `GET /api/product/alerts/profile` as the sourced authority, states that no SMS/webhook dispatch exists, and says explicitly that unmeasured parameters are never part of the tiers. The public **My Checks** page no longer shows fabricated lake/reservoir history quoted in NTU — it shows clearly-labelled demonstration entries for the three rivers with relative-index wording.
 - **One central four-parameter suitability engine.** Every suitability decision now flows through `backend/app/services/suitability_engine.py`, which accepts **exactly** pH, TDS, temperature and turbidity (any other key raises `ValueError`, so dissolved oxygen, ML scores, rainfall, history or location can never influence a result), delegates to the per-purpose threshold profiles in `water_screening.py`, and emits one canonical four-state vocabulary — `within_configured_ranges` / `caution` / `outside_configured_ranges` / `insufficient_data` — defined in `screening_states.py` and shared with the station engine (`water_suitability.py`). Product tests persist it in a new `overall_state` column (migration `a9b0c1d2e3f4`, backfilled from stored assessments) and serve it next to the unchanged legacy `overall_status`, so existing screens keep working. Invalid, stale, unstable or non-finite readings always collapse to `insufficient_data` — never a positive result. Tests: `backend/tests/test_suitability_engine.py` (49 tests).
 
+- **Turbidity-unvalidated results can no longer read as a full pass.** In the product screening
+  engine (`water_screening.py`) any use whose profile rates turbidity (drinking, domestic,
+  swimming, general) now caps its best possible result at `REVIEW_RECOMMENDED` (canonical
+  `caution`) when turbidity is a relative index without NTU calibration or is missing, and the
+  assessment carries an explicit warning: *pH and TDS passing their screening rules is reported
+  as a caution — not as a full pass*. Regression tests in
+  `tests/test_product_tests.py` / `tests/test_product_screening.py`.
+- **The authority Alerts page is served by the backend.** New `GET /api/authority/alerts`
+  (authority-role only) derives danger-level alerts from each active station's latest stored
+  reading through the shared alerting service and versioned threshold profile — no fabricated
+  entries, simulated rows keep their labels, stations without readings produce no alerts.
+  `frontend/src/pages/authority/Alerts.tsx` now shows loading, empty, error and
+  unauthorized/expired states instead of `mockAlerts`.
+- **Prototype authority pages are labelled.** Incidents, Inspections and Laboratory carry a
+  visible `PrototypeBanner` naming exactly what is missing (no backend endpoints, demonstration
+  records only, laboratory results are not sensor measurements), so no screen implies a real
+  incident/inspection/lab workflow.
+- **Production configuration can be checked locally.** `backend/scripts/verify_production_config.py`
+  plus `backend/tests/test_production_config.py` implement the static checklist above; deployment
+  itself remains UNVERIFIED until the checklist runs against the real environment.
+- **Schema drift is documented, not dropped.** The legacy `water_tests` / `water_test_assessments`
+  / `water_test_predictions` tables and the two retired `product_devices` columns are inventoried
+  above with the verification that no application code references them; no table or row was
+  deleted and migration history was not rewritten.
 - **Simulation state is persistent and shared.** The previous per-process in-memory state was replaced by the `simulation_runs` singleton row (migration `c1d2e3f4a5b6`) with a per-worker generation lease: controls stay consistent across API workers and restarts, and no duplicate simulation loops can run.
 - **Alert thresholds are transparent.** Every alert number comes from one versioned, sourced profile that separates `official_standard` (BIS-cited) from `project_configured` (illustrative, requires local validation), served by `GET /api/product/alerts/profile` and shown in the UI; turbidity-index alerts are never compared with NTU limits.
 - **ML availability is explicit per reading.** Relative-index readings report “ML prediction unavailable for Turbidity Index readings.” with the reason, and stale labels are never surfaced next to an “unavailable” status.
@@ -624,7 +704,9 @@ This project deliberately constrains its claims:
 
 - **No probabilistic or trained forecasting model.** Only the Ridge baseline is implemented; there are no confidence intervals (the band is the holdout MAE), no exogenous inputs (e.g. rainfall), and parameters with short or non-predictable history report `unavailable` rather than numbers. Stations without enough stored history (currently `CAU-001`, `VRS-001`) show the readiness state instead of a forecast.
 - **No ML for turbidity-index readings.** No representative labelled index dataset exists yet, so the exclusion is retained by design; the training workflow is documented in [docs/TURBIDITY_INDEX_ML.md](docs/TURBIDITY_INDEX_ML.md).
-- **No incident/inspection workflow or drift monitoring** — and rate limiting currently covers only the authentication endpoints (login/registration), not every public or authority route. See [docs/FEATURE_STATUS.md](docs/FEATURE_STATUS.md) §6 for the full open-findings table.
+- **No incident/inspection workflow or drift monitoring** — Incidents, Inspections and Laboratory remain labelled prototypes (demonstration records, no endpoints). Rate limiting still covers only the authentication endpoints (login/registration), not every public or authority route, and there is no account lockout. See [docs/FEATURE_STATUS.md](docs/FEATURE_STATUS.md) §6 for the full open-findings table.
+- **Production security is still UNVERIFIED.** The static checker and its tests only prove the code fails closed; the deployment checklist above has not been exercised on a real environment.
+- **Intentional schema drift remains open** — the legacy tables/columns listed above are still in the database by design (no drops); `alembic check` will keep flagging them until a reviewed migration is written.
 
 ---
 

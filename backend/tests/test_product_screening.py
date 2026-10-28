@@ -20,6 +20,16 @@ from app.services.water_screening import (
 NOW = datetime(2026, 10, 24, 10, 0, tzinfo=timezone.utc)
 STRICT_MESSAGE = "Does not meet the project's strict drinking-water TDS target of 200 ppm"
 
+# A fully calibrated sensor set whose turbidity is genuinely NTU — the only
+# way turbidity can be validated. With the default relative-index turbidity the
+# best possible result for turbidity-rated uses is REVIEW_RECOMMENDED
+# (unvalidated-turbidity cap), so tests whose intent is a clean pass use this.
+CALIBRATED = {
+    "ph": "calibrated", "tds": "calibrated",
+    "turbidity": "calibrated", "temperature": "calibrated",
+}
+NTU_PASS = {"turbidity": 0.5, "unit": "ntu", "calibration": CALIBRATED}
+
 
 def run(
     *,
@@ -63,7 +73,7 @@ def reason_text(result):
 
 @pytest.mark.parametrize("ph", [6.5, 7.0, 8.5])
 def test_ph_within_reference(ph):
-    result = run(ph=ph, tds=320)
+    result = run(ph=ph, tds=320, **NTU_PASS)
     assert status(result, "ph") == "within_range"
     assert result["overall"]["status"] == "WITHIN_PROJECT_TARGETS"
 
@@ -97,7 +107,7 @@ def test_ph_outside_reference(ph):
     ],
 )
 def test_drinking_tds_boundaries(tds, tds_status, overall):
-    result = run(tds=tds)
+    result = run(tds=tds, **NTU_PASS)
     assert status(result, "tds") == tds_status
     assert result["overall"]["status"] == overall
 
@@ -125,7 +135,7 @@ def test_below_strict_target_message_is_explicit_and_not_an_official_unsafe_clai
 
 def test_strict_rule_can_be_disabled_without_changing_official_limits():
     criteria = ScreeningCriteria(demo_strict_tds_rule=False)
-    result = run(tds=150, criteria=criteria)
+    result = run(tds=150, criteria=criteria, **NTU_PASS)
     assert status(result, "tds") == "within_range"
     assert result["overall"]["status"] == "WITHIN_PROJECT_TARGETS"
     assert result["reference_profile"]["demo_rules"]["DEMO_STRICT_TDS_RULE"]["enabled"] is False
@@ -247,11 +257,17 @@ def test_relative_index_is_never_compared_with_ntu():
 
 
 def test_relative_index_does_not_create_a_green_pass():
+    """pH and TDS passing with an unvalidated turbidity index is a CAUTION."""
     result = run(turbidity=80.0, unit="relative_index_0_100", tds=320)
-    assert result["overall"]["status"] == "WITHIN_PROJECT_TARGETS"
-    assert "does not certify" in result["overall"]["summary"]
+    assert result["overall"]["status"] == "REVIEW_RECOMMENDED"
+    assert "not a certification that the water is safe to drink" in (
+        result["overall"]["summary"].lower()
+    )
     assert any(item["parameter"] == "turbidity"
                for item in result["overall"]["reason_details"])
+    # The exact reason must be stated in the warnings.
+    assert any("NTU calibration required" in warning
+               for warning in result["data_quality"]["warnings"])
 
 
 def test_uncalibrated_ntu_is_not_compared():
@@ -278,7 +294,7 @@ def test_invalid_tds_is_inconclusive(bad_tds):
 
 
 def test_missing_temperature_is_context_only():
-    result = run(temperature=None)
+    result = run(temperature=None, **NTU_PASS)
     assert status(result, "temperature") == "not_measured"
     assert result["overall"]["status"] == "WITHIN_PROJECT_TARGETS"
     assert any("Temperature" in warning for warning in result["data_quality"]["warnings"])
@@ -332,9 +348,7 @@ def test_live_unverified_calibration_is_inconclusive_not_green():
 
 def test_live_calibrated_stable_readings_can_pass():
     result = run(
-        mode="live", tds=320, ph=7.2,
-        calibration={"ph": "calibrated", "tds": "calibrated",
-                     "turbidity": "calibrated", "temperature": "calibrated"},
+        mode="live", tds=320, ph=7.2, **NTU_PASS,
         stability={"status": "stable", "stable": True, "message": "Readings stable"},
     )
     assert result["data_quality"]["calibration_verified"] is True
@@ -354,7 +368,7 @@ def test_demo_mode_is_labelled_simulation():
 
 def test_stable_window_can_pass():
     stability = {"status": "stable", "stable": True, "message": "Readings stable"}
-    result = run(stability=stability)
+    result = run(stability=stability, **NTU_PASS)
     assert result["overall"]["status"] == "WITHIN_PROJECT_TARGETS"
     assert result["data_quality"]["stability"]["stable"] is True
 
@@ -386,7 +400,7 @@ def test_stale_live_reading_is_inconclusive():
 # ---------------------------------------------------------------------------
 
 def test_drinking_never_certifies_potability():
-    result = run()
+    result = run(**NTU_PASS)
     assert result["overall"]["status"] == "WITHIN_PROJECT_TARGETS"
     assert "does not certify" in result["overall"]["summary"]
     assert "Laboratory testing is required" in " ".join(result["next_steps"])
@@ -394,7 +408,7 @@ def test_drinking_never_certifies_potability():
 
 
 def test_domestic_is_not_universal_suitability():
-    result = run(use="domestic")
+    result = run(use="domestic", **NTU_PASS)
     assert result["overall"]["status"] == "WITHIN_PROJECT_TARGETS"
     assert "not a potability assessment" in result["overall"]["summary"]
     assert "different requirements" in result["overall"]["summary"]

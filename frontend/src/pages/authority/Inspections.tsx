@@ -1,9 +1,16 @@
 import { mockInspections } from "../../data/mockData";
+import PrototypeBanner from "../../components/authority/PrototypeBanner";
 import { ClipboardCheck, Calendar, UserCheck } from "lucide-react";
 
 export default function Inspections() {
   return (
     <div className="space-y-6">
+      <PrototypeBanner
+        feature="Inspections"
+        missing="Needed to make this real: an inspections model with scheduling and
+        officer-assignment endpoints (AUTHORITY-only writes), status transitions, and
+        field-captured results attached to a monitoring station."
+      />
       {/* Header */}
       <div>
         <div className="inline-flex items-center gap-2 rounded-full bg-cyan-50 px-2.5 py-1 text-xs font-bold text-cyan-800 border border-cyan-200">
