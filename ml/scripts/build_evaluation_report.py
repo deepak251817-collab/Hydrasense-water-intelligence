@@ -216,33 +216,77 @@ def build_random_forest_section() -> dict[str, Any]:
     }
 
 
+# Must match the order used at training time (ml/scripts/train_isolation_forest.py).
+ANOMALY_FEATURES = ["ph", "turbidity", "tds", "temperature"]
+
+
+def _anomaly_feature_frame(df: pd.DataFrame) -> pd.DataFrame:
+    """Select the four anomaly features case-insensitively, in canonical order."""
+    lookup = {str(column).strip().lower(): column for column in df.columns}
+    missing = [feature for feature in ANOMALY_FEATURES if feature.lower() not in lookup]
+    if missing:
+        raise ValueError(f"Anomaly evaluation data is missing features: {missing}")
+    return pd.DataFrame(
+        {
+            feature: pd.to_numeric(df[lookup[feature]], errors="coerce")
+            for feature in ANOMALY_FEATURES
+        }
+    ).dropna()
+
+
 def build_isolation_forest_section() -> dict[str, Any]:
-    if not ANOMALY_RESULTS.exists():
+    """Descriptive anomaly scoring on the benchmark test split.
+
+    The model is trained on the benchmark training split, so the 15,120-row test
+    split gives a meaningful distributional check (unlike the 9 live telemetry
+    rows, which are too few to describe a normal region). There are still no
+    contamination labels, so only the anomaly rate and score distribution are
+    reported; an anomaly is an unusual sensor pattern, not confirmed pollution.
+    """
+    if not IF_MODEL.exists() or not SUPERVISED_TEST.exists():
         return {
             "available": False,
-            "reason": "anomaly_results.csv is missing. Run the Phase 5B inference step first.",
-            "command": "python ml/scripts/detect_anomalies.py",
+            "reason": (
+                "isolation_forest.joblib or supervised_test.csv is missing. "
+                "Run the isolation-forest training step first."
+            ),
+            "command": "python ml/scripts/train_isolation_forest.py",
         }
-    df = pd.read_csv(ANOMALY_RESULTS)
-    scores = pd.to_numeric(df["anomaly_score"], errors="coerce").dropna()
-    labels = pd.to_numeric(df.get("anomaly_label"), errors="coerce").dropna()
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        model = joblib.load(IF_MODEL)
+
+    features = _anomaly_feature_frame(pd.read_csv(SUPERVISED_TEST))
+    predictions = model.predict(features)
+    scores = model.decision_function(features)
+    anomalies = int((predictions == -1).sum())
+
+    telemetry_rows = None
+    if ANOMALY_RESULTS.exists():
+        telemetry_rows = int(len(pd.read_csv(ANOMALY_RESULTS)))
+
     return {
         "available": True,
         "task": "Unsupervised anomaly screening",
         "live_inference": True,
         "model": _model_metadata(IF_MODEL, "isolation_forest"),
         "dataset": {
-            "name": "station telemetry (Phase 5B clean sensor readings)",
-            "split_file": ANOMALY_RESULTS.name,
-            "n_scored_readings": int(len(df)),
+            "name": "benchmark test split (distributional check)",
+            "split_file": SUPERVISED_TEST.name,
+            "n_scored_readings": int(len(features)),
+            "telemetry_rows_scored": telemetry_rows,
+            "trained_on": "ml/data/processed/supervised_train.csv (70,560 rows; labels unused)",
             "note": (
                 "Unsupervised: there are no ground-truth contamination labels, so "
-                "accuracy/precision/recall are intentionally not reported."
+                "accuracy/precision/recall are intentionally not reported. The rate "
+                "describes how often the model flags benchmark-distribution rows, "
+                "not a real-world contamination rate."
             ),
         },
         "summary": {
-            "anomalies_flagged": int(labels.sum()) if len(labels) else None,
-            "anomaly_rate": float(labels.mean()) if len(labels) else None,
+            "anomalies_flagged": anomalies,
+            "anomaly_rate": float(anomalies / len(features)) if len(features) else None,
             "score_min": float(scores.min()) if len(scores) else None,
             "score_max": float(scores.max()) if len(scores) else None,
             "score_mean": float(scores.mean()) if len(scores) else None,

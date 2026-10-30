@@ -1,0 +1,171 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-10-30T05:42:33.256292+00:00",
+  "generator": "ml/scripts/write_model_manifest.py",
+  "environment": {
+    "python": "3.11.9",
+    "scikit_learn": "1.4.2"
+  },
+  "policy": "Every served artifact is listed with its checksum, feature contract, training source and measured metrics. Missing artifacts are reported as absent, never replaced with placeholders.",
+  "artifacts": [
+    {
+      "file": "isolation_forest.joblib",
+      "present": true,
+      "key": "isolation_forest",
+      "role": "Unsupervised anomaly screening",
+      "estimator": "IsolationForest",
+      "features": [
+        "ph",
+        "turbidity",
+        "tds",
+        "temperature"
+      ],
+      "live_inference": true,
+      "trained_on": "ml/data/processed/supervised_train.csv (70,560 rows; label unused)",
+      "saved_with_sklearn": "1.4.2",
+      "size_bytes": 1456616,
+      "sha256": "a6cc599ec31a1dc659ee00a527f7b2e79d4f0215b9a0f5597312bf616443e3c5",
+      "modified_at_utc": "2026-10-30T05:40:23.502156+00:00",
+      "metrics": {
+        "anomalies_flagged": 727,
+        "anomaly_rate": 0.04808201058201058,
+        "score_min": -0.10015359535758961,
+        "score_max": 0.1582246013224236,
+        "score_mean": 0.08601548045995003
+      },
+      "metrics_source": "ml/reports/evaluation_report.json",
+      "limitations": [
+        "Trained on an external benchmark distribution; recalibrate on real calibrated site telemetry.",
+        "No ground-truth contamination labels: the anomaly rate is descriptive, not a contamination rate.",
+        "An anomaly is an unusual sensor pattern, never confirmed pollution."
+      ]
+    },
+    {
+      "file": "random_forest_classifier.joblib",
+      "present": true,
+      "key": "random_forest",
+      "role": "Safe/Unsafe benchmark classification (advisory)",
+      "estimator": "RandomForestClassifier",
+      "features": [
+        "pH",
+        "tds",
+        "turbidity",
+        "temperature"
+      ],
+      "live_inference": true,
+      "trained_on": "ml/data/processed/supervised_train.csv (70,560 rows)",
+      "saved_with_sklearn": "1.4.2",
+      "size_bytes": 302761,
+      "sha256": "c3c66281d1c77fb47ef0bd0052496eb9434b526c5e10edbd9151852826a4c38f",
+      "modified_at_utc": "2026-10-30T05:40:31.669712+00:00",
+      "metrics": {
+        "n_samples": 15120,
+        "accuracy": 0.9998677248677249,
+        "balanced_accuracy": 0.9998425296044343,
+        "precision_macro": 0.9998425296044343,
+        "recall_macro": 0.9998425296044343,
+        "f1_macro": 0.9998425296044343,
+        "f1_weighted": 0.9998677248677249,
+        "confusion_matrix": {
+          "labels": [
+            "Safe",
+            "Unsafe"
+          ],
+          "matrix": [
+            [
+              4535,
+              1
+            ],
+            [
+              1,
+              10583
+            ]
+          ],
+          "row_semantics": "true class (rows) vs predicted class (columns)"
+        },
+        "per_class": {
+          "Safe": {
+            "precision": 0.9997795414462081,
+            "recall": 0.9997795414462081,
+            "f1": 0.9997795414462081,
+            "support": 4536
+          },
+          "Unsafe": {
+            "precision": 0.9999055177626606,
+            "recall": 0.9999055177626606,
+            "f1": 0.9999055177626606,
+            "support": 10584
+          }
+        },
+        "roc_auc_unsafe": 0.9999999583411652
+      },
+      "metrics_source": "ml/reports/evaluation_report.json",
+      "limitations": [
+        "The Safe/Unsafe label follows the benchmark dataset's labeling rule, not laboratory potability.",
+        "Metrics come from a static benchmark test split, not the live sensors.",
+        "Never overrides or alters rule-based suitability screening."
+      ]
+    },
+    {
+      "file": "xgboost_deterioration.joblib",
+      "present": true,
+      "key": "xgboost",
+      "role": "Offline future-deterioration analysis (not live)",
+      "estimator": "XGBClassifier",
+      "features": "ml/data/processed/xgboost_feature_list.txt (36 USGS-derived columns)",
+      "live_inference": false,
+      "trained_on": "ml/data/processed/forecast_train.csv (5,321 rows, USGS-01649190)",
+      "saved_with_sklearn": "1.4.2",
+      "size_bytes": 616031,
+      "sha256": "e4fc5402345b1ebbcd84495c8b4474e898f66194dd25c9b24d7c5dd41cb5c322",
+      "modified_at_utc": "2026-10-30T05:40:34.926023+00:00",
+      "metrics": {
+        "n_samples": 1139,
+        "accuracy": 0.9438103599648815,
+        "balanced_accuracy": 0.5375699440447642,
+        "precision_macro": 0.5239348158207435,
+        "recall_macro": 0.5375699440447642,
+        "f1_macro": 0.5283643892339545,
+        "f1_weighted": 0.950028447459451,
+        "confusion_matrix": {
+          "labels": [
+            "Safe",
+            "Unsafe"
+          ],
+          "matrix": [
+            [
+              1072,
+              40
+            ],
+            [
+              24,
+              3
+            ]
+          ],
+          "row_semantics": "true class (rows) vs predicted class (columns)"
+        },
+        "per_class": {
+          "Safe": {
+            "precision": 0.9781021897810219,
+            "recall": 0.9640287769784173,
+            "f1": 0.9710144927536232,
+            "support": 1112
+          },
+          "Unsafe": {
+            "precision": 0.06976744186046512,
+            "recall": 0.1111111111111111,
+            "f1": 0.08571428571428572,
+            "support": 27
+          }
+        },
+        "roc_auc_unsafe": 0.6287636557420729
+      },
+      "metrics_source": "ml/reports/evaluation_report.json",
+      "limitations": [
+        "Offline only: requires USGS lag/rolling and conductivity features live telemetry cannot supply.",
+        "Single station, ~5 weeks of synchronized data; temporal generalization is limited.",
+        "Predicts a rule-based deterioration indicator, not confirmed contamination."
+      ]
+    }
+  ]
+}

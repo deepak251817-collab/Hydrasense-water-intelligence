@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "generated_at": "2026-10-24T01:10:26.346260+00:00",
+  "generated_at": "2026-10-30T05:41:34.969337+00:00",
   "generator": "ml/scripts/build_evaluation_report.py",
   "environment": {
     "python": "3.11.9",
@@ -95,8 +95,8 @@
     "live_inference": true,
     "model": {
       "file": "isolation_forest.joblib",
-      "size_bytes": 137625,
-      "sha256": "54697d043b43f06f17fac074b50281ece497d16548fa53a207c327179242afb5",
+      "size_bytes": 1456616,
+      "sha256": "a6cc599ec31a1dc659ee00a527f7b2e79d4f0215b9a0f5597312bf616443e3c5",
       "estimator": "IsolationForest",
       "sklearn_version": "1.4.2",
       "n_features_in": 4,
@@ -105,17 +105,19 @@
       "max_samples": "auto"
     },
     "dataset": {
-      "name": "station telemetry (Phase 5B clean sensor readings)",
-      "split_file": "anomaly_results.csv",
-      "n_scored_readings": 9,
-      "note": "Unsupervised: there are no ground-truth contamination labels, so accuracy/precision/recall are intentionally not reported."
+      "name": "benchmark test split (distributional check)",
+      "split_file": "supervised_test.csv",
+      "n_scored_readings": 15120,
+      "telemetry_rows_scored": 9,
+      "trained_on": "ml/data/processed/supervised_train.csv (70,560 rows; labels unused)",
+      "note": "Unsupervised: there are no ground-truth contamination labels, so accuracy/precision/recall are intentionally not reported. The rate describes how often the model flags benchmark-distribution rows, not a real-world contamination rate."
     },
     "summary": {
-      "anomalies_flagged": 4,
-      "anomaly_rate": 0.4444444444444444,
-      "score_min": -0.022505,
-      "score_max": 0.103192,
-      "score_mean": 0.022527111111111116
+      "anomalies_flagged": 727,
+      "anomaly_rate": 0.04808201058201058,
+      "score_min": -0.10015359535758961,
+      "score_max": 0.1582246013224236,
+      "score_mean": 0.08601548045995003
     }
   },
   "xgboost": {

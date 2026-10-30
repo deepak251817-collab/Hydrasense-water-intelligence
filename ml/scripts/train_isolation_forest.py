@@ -1,12 +1,19 @@
 """
-Isolation Forest Model Training Script for HydraSense ML Pipeline (Phase 5B).
+Isolation Forest Model Training Script for HydraSense ML Pipeline.
 
-Trains an sklearn IsolationForest model strictly on the training dataset split
-(ml/data/processed/train.csv) using the four approved sensor features:
-- ph
+Trains an sklearn IsolationForest on the four approved sensor features:
+- pH
 - turbidity
-- tds
+- TDS
 - temperature
+
+Training source (2026-10 remediation): the benchmark training split
+``ml/data/processed/supervised_train.csv`` (70,560 rows). The previous model
+was fitted on only 9 telemetry rows, which is far too few to define a stable
+"normal" region. The benchmark's ``label`` column is **not** used: Isolation
+Forest remains fully unsupervised; the larger dataset only supplies realistic
+feature distributions. This is an external-benchmark model and must be
+recalibrated on real calibrated site telemetry before operational reliance.
 
 Saves the trained model artifact to ml/models/isolation_forest.joblib.
 """
@@ -15,7 +22,7 @@ import sys
 import argparse
 import logging
 from pathlib import Path
-from typing import Tuple, Optional, List
+from typing import Dict, Tuple, Optional, List
 import pandas as pd
 import numpy as np
 import joblib
@@ -30,11 +37,32 @@ if str(ROOT_DIR) not in sys.path:
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-DEFAULT_TRAIN_PATH = BASE_DIR / "data" / "processed" / "train.csv"
+DEFAULT_TRAIN_PATH = BASE_DIR / "data" / "processed" / "supervised_train.csv"
 DEFAULT_MODEL_PATH = BASE_DIR / "models" / "isolation_forest.joblib"
 
-# Core approved sensor features
+# Core approved sensor features, in the exact order the backend assembles them.
 APPROVED_FEATURES = ["ph", "turbidity", "tds", "temperature"]
+
+
+def _resolve_feature_columns(df: pd.DataFrame, features: List[str]) -> Dict[str, str]:
+    """Map canonical feature names to actual columns (case-insensitive).
+
+    The benchmark table uses ``pH`` while the telemetry export uses ``ph``;
+    both describe the same quantity, so the match is case-insensitive and the
+    fitted feature order stays canonical.
+    """
+    lookup = {str(column).strip().lower(): column for column in df.columns}
+    mapping: Dict[str, str] = {}
+    missing: List[str] = []
+    for feature in features:
+        actual = lookup.get(feature.lower())
+        if actual is None:
+            missing.append(feature)
+        else:
+            mapping[feature] = actual
+    if missing:
+        raise KeyError(f"Training dataset missing required feature columns: {missing}")
+    return mapping
 DEFAULT_CONTAMINATION = 0.05
 DEFAULT_RANDOM_STATE = 42
 
@@ -79,15 +107,18 @@ def train_isolation_forest(
     if df_train.empty:
         raise ValueError("Training dataset is empty. Cannot train Isolation Forest.")
 
-    # Validate feature presence
-    missing_cols = [col for col in target_features if col not in df_train.columns]
-    if missing_cols:
-        raise KeyError(f"Training dataset missing required feature columns: {missing_cols}")
+    # Validate feature presence (case-insensitive; the benchmark uses `pH`).
+    column_map = _resolve_feature_columns(df_train, target_features)
 
-    # Extract feature matrix X and handle missing values safely
-    X = df_train[target_features].copy()
-    for col in target_features:
-        X[col] = pd.to_numeric(X[col], errors="coerce")
+    # Extract the feature matrix in canonical order and handle missing values.
+    # Any extra columns (notably a `label`) are deliberately ignored: the
+    # anomaly detector is unsupervised and must never read class labels.
+    X = pd.DataFrame(
+        {
+            feature: pd.to_numeric(df_train[column_map[feature]], errors="coerce")
+            for feature in target_features
+        }
+    )
 
     # Drop any rows with NaN in features to ensure safe training
     initial_len = len(X)

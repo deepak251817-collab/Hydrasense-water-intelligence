@@ -1,0 +1,313 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-10-30T05:43:05.201673+00:00",
+  "generator": "ml/scripts/inspect_datasets.py",
+  "policy": "All figures are measured from the files at generation time. Licence and provenance are reported only when documented; otherwise the report says unable to verify.",
+  "datasets": [
+    {
+      "file": "water_quality_dataset1.csv",
+      "kind": "static classification benchmark",
+      "rows": 100800,
+      "columns": [
+        "pH",
+        "TDS_ppm",
+        "Turbidity_NTU",
+        "Temperature_C",
+        "Label"
+      ],
+      "units": {
+        "pH": "pH units",
+        "TDS_ppm": "mg/L (ppm), NaCl-equivalent scale as distributed",
+        "Turbidity_NTU": "NTU (laboratory-style turbidity unit \u2014 NOT the hardware index)",
+        "Temperature_C": "\u00b0C"
+      },
+      "duplicate_rows": 0,
+      "missing_values_total": 0,
+      "missing_values": {
+        "pH": 0,
+        "TDS_ppm": 0,
+        "Turbidity_NTU": 0,
+        "Temperature_C": 0,
+        "Label": 0
+      },
+      "labels": {
+        "Unsafe": 70560,
+        "Safe": 30240
+      },
+      "class_balance": {
+        "Unsafe": 0.7,
+        "Safe": 0.3
+      },
+      "feature_ranges": {
+        "pH": {
+          "min": 6.09,
+          "max": 9.96,
+          "mean": 7.593914583333334
+        },
+        "TDS_ppm": {
+          "min": 28.6,
+          "max": 2806.1,
+          "mean": 692.646992063492
+        },
+        "Turbidity_NTU": {
+          "min": 0.0,
+          "max": 72.75,
+          "mean": 11.306749503968252
+        },
+        "Temperature_C": {
+          "min": 16.56,
+          "max": 31.51,
+          "mean": 24.88351597222222
+        }
+      },
+      "time_axis": null,
+      "station_axis": null,
+      "provenance": "Not documented in this repository. The source, access date and licence must be confirmed before redistribution or publication (unable to verify).",
+      "fitness_for_project": "Used only to bootstrap/benchmark the anomaly and Safe/Unsafe models on matching pH/TDS/turbidity/temperature units. Its NTU turbidity is NOT fed from the ESP32 relative index, and its labels never define suitability."
+    },
+    {
+      "file": "usgs_ph_2024.csv",
+      "kind": "USGS time series (long format)",
+      "rows": 10000,
+      "columns": [
+        "x",
+        "y",
+        "time_series_id",
+        "monitoring_location_id",
+        "parameter_code",
+        "statistic_id",
+        "time",
+        "value",
+        "unit_of_measure",
+        "approval_status",
+        "qualifier",
+        "last_modified"
+      ],
+      "units": [
+        "pH Units"
+      ],
+      "parameters": [
+        "00400"
+      ],
+      "stations": [
+        "USGS-01649190"
+      ],
+      "time_range": {
+        "start": "2024-01-01T00:00:00+00:00",
+        "end": "2024-02-04T19:55:00+00:00"
+      },
+      "value_range": {
+        "min": 7.2,
+        "max": 7.7
+      },
+      "duplicate_rows": 0,
+      "missing_values_total": 10000,
+      "missing_values": {
+        "x": 0,
+        "y": 0,
+        "time_series_id": 0,
+        "monitoring_location_id": 0,
+        "parameter_code": 0,
+        "statistic_id": 0,
+        "time": 0,
+        "value": 0,
+        "unit_of_measure": 0,
+        "approval_status": 0,
+        "qualifier": 10000,
+        "last_modified": 0
+      },
+      "missing_key_values": 0,
+      "all_null_optional_columns": [
+        "qualifier"
+      ],
+      "approval_status": {
+        "Approved": 10000
+      },
+      "provenance": "USGS Water Data for the Nation export (station USGS-01649190, 2024). USGS data are public-domain U.S. Government works; retain the USGS attribution when redistributing.",
+      "fitness_for_project": "Used for chronological forecasting/deterioration research only. Specific conductance is kept distinct from TDS and is never converted or renamed."
+    },
+    {
+      "file": "usgs_conductance_2024.csv",
+      "kind": "USGS time series (long format)",
+      "rows": 10000,
+      "columns": [
+        "x",
+        "y",
+        "time_series_id",
+        "monitoring_location_id",
+        "parameter_code",
+        "statistic_id",
+        "time",
+        "value",
+        "unit_of_measure",
+        "approval_status",
+        "qualifier",
+        "last_modified"
+      ],
+      "units": [
+        "uS/cm"
+      ],
+      "parameters": [
+        "00095"
+      ],
+      "stations": [
+        "USGS-01649190"
+      ],
+      "time_range": {
+        "start": "2024-01-01T00:00:00+00:00",
+        "end": "2024-02-05T15:00:00+00:00"
+      },
+      "value_range": {
+        "min": 28.0,
+        "max": 4440.0
+      },
+      "duplicate_rows": 0,
+      "missing_values_total": 10000,
+      "missing_values": {
+        "x": 0,
+        "y": 0,
+        "time_series_id": 0,
+        "monitoring_location_id": 0,
+        "parameter_code": 0,
+        "statistic_id": 0,
+        "time": 0,
+        "value": 0,
+        "unit_of_measure": 0,
+        "approval_status": 0,
+        "qualifier": 10000,
+        "last_modified": 0
+      },
+      "missing_key_values": 0,
+      "all_null_optional_columns": [
+        "qualifier"
+      ],
+      "approval_status": {
+        "Approved": 10000
+      },
+      "provenance": "USGS Water Data for the Nation export (station USGS-01649190, 2024). USGS data are public-domain U.S. Government works; retain the USGS attribution when redistributing.",
+      "fitness_for_project": "Used for chronological forecasting/deterioration research only. Specific conductance is kept distinct from TDS and is never converted or renamed."
+    },
+    {
+      "file": "usgs_temperature_2024.csv",
+      "kind": "USGS time series (long format)",
+      "rows": 10000,
+      "columns": [
+        "x",
+        "y",
+        "time_series_id",
+        "monitoring_location_id",
+        "parameter_code",
+        "statistic_id",
+        "time",
+        "value",
+        "unit_of_measure",
+        "approval_status",
+        "qualifier",
+        "last_modified"
+      ],
+      "units": [
+        "degC"
+      ],
+      "parameters": [
+        "00010"
+      ],
+      "stations": [
+        "USGS-01649190"
+      ],
+      "time_range": {
+        "start": "2024-01-01T00:00:00+00:00",
+        "end": "2024-02-04T19:55:00+00:00"
+      },
+      "value_range": {
+        "min": -0.2,
+        "max": 10.5
+      },
+      "duplicate_rows": 0,
+      "missing_values_total": 10000,
+      "missing_values": {
+        "x": 0,
+        "y": 0,
+        "time_series_id": 0,
+        "monitoring_location_id": 0,
+        "parameter_code": 0,
+        "statistic_id": 0,
+        "time": 0,
+        "value": 0,
+        "unit_of_measure": 0,
+        "approval_status": 0,
+        "qualifier": 10000,
+        "last_modified": 0
+      },
+      "missing_key_values": 0,
+      "all_null_optional_columns": [
+        "qualifier"
+      ],
+      "approval_status": {
+        "Approved": 10000
+      },
+      "provenance": "USGS Water Data for the Nation export (station USGS-01649190, 2024). USGS data are public-domain U.S. Government works; retain the USGS attribution when redistributing.",
+      "fitness_for_project": "Used for chronological forecasting/deterioration research only. Specific conductance is kept distinct from TDS and is never converted or renamed."
+    },
+    {
+      "file": "usgs_turbidity_2024.csv",
+      "kind": "USGS time series (long format)",
+      "rows": 10000,
+      "columns": [
+        "x",
+        "y",
+        "time_series_id",
+        "monitoring_location_id",
+        "parameter_code",
+        "statistic_id",
+        "time",
+        "value",
+        "unit_of_measure",
+        "approval_status",
+        "qualifier",
+        "last_modified"
+      ],
+      "units": [
+        "_FNU"
+      ],
+      "parameters": [
+        "63680"
+      ],
+      "stations": [
+        "USGS-01649190"
+      ],
+      "time_range": {
+        "start": "2024-01-01T00:00:00+00:00",
+        "end": "2024-02-13T05:10:00+00:00"
+      },
+      "value_range": {
+        "min": 0.6,
+        "max": 591.0
+      },
+      "duplicate_rows": 0,
+      "missing_values_total": 10000,
+      "missing_values": {
+        "x": 0,
+        "y": 0,
+        "time_series_id": 0,
+        "monitoring_location_id": 0,
+        "parameter_code": 0,
+        "statistic_id": 0,
+        "time": 0,
+        "value": 0,
+        "unit_of_measure": 0,
+        "approval_status": 0,
+        "qualifier": 10000,
+        "last_modified": 0
+      },
+      "missing_key_values": 0,
+      "all_null_optional_columns": [
+        "qualifier"
+      ],
+      "approval_status": {
+        "Provisional": 10000
+      },
+      "provenance": "USGS Water Data for the Nation export (station USGS-01649190, 2024). USGS data are public-domain U.S. Government works; retain the USGS attribution when redistributing.",
+      "fitness_for_project": "Used for chronological forecasting/deterioration research only. Specific conductance is kept distinct from TDS and is never converted or renamed."
+    }
+  ]
+}

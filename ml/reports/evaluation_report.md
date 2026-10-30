@@ -1,6 +1,6 @@
 # HydraSense ML Evaluation Report
 
-Generated: `2026-10-24T01:10:26.346260+00:00` by `ml/scripts/build_evaluation_report.py`.
+Generated: `2026-10-30T05:41:34.969337+00:00` by `ml/scripts/build_evaluation_report.py`.
 
 > Every metric below was computed from the saved prediction outputs and model artifacts in this repository. Nothing is hand-written or hardcoded. These are model estimates, not laboratory measurements.
 
@@ -27,9 +27,9 @@ Features: `pH, tds, turbidity, temperature`
 
 ## Isolation Forest — anomaly screening (live inference)
 
-- Readings scored: **9**
-- Flagged anomalies: **4** (rate = 0.4444)
-- Anomaly score range: **-0.0225 … 0.1032** (mean 0.0225)
+- Readings scored: **15,120**
+- Flagged anomalies: **727** (rate = 0.0481)
+- Anomaly score range: **-0.1002 … 0.1582** (mean 0.0860)
 
 Precision/recall/accuracy are **not reported**: no ground-truth contamination labels exist. An anomaly is an unusual sensor pattern, not confirmed pollution.
 

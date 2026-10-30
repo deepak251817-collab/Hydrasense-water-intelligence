@@ -33,7 +33,7 @@ ml/
 │   ├── export_sensor_data.py       # Extract telemetry from PostgreSQL to raw CSV
 │   ├── data_quality_report.py      # Generate summary quality & statistics report
 │   ├── create_splits.py            # Chronological train (70%) / validation (15%) / test (15%) splits
-│   ├── train_isolation_forest.py   # Train Isolation Forest on train.csv and save model
+│   ├── train_isolation_forest.py   # Train Isolation Forest on supervised_train.csv (70,560 rows)
 │   ├── detect_anomalies.py         # Generate anomaly_score and anomaly_label (0=normal, 1=anomaly)
 │   ├── evaluate_isolation_forest.py# Unsupervised qualitative evaluation on validation/test splits
 │   ├── inspect_supervised_dataset.py # Phase 5C-1 dataset inspection & validation report
@@ -93,8 +93,10 @@ The ML pipeline strictly processes the four core water quality parameters and ma
 Isolation Forest isolates anomalies by randomly selecting a feature and splitting values. Because anomalous observations are unusual and numerically distinct, they require fewer partitioning splits to isolate, resulting in shorter tree path lengths.
 
 ### 2. Training Strategy & Leakage Protection
-- **Training Data**: Trained strictly on `ml/data/processed/train.csv` (70% earliest chronological observations).
-- **No Lookahead**: Validation (`validation.csv`) and Test (`test.csv`) splits are **never** used during model fitting.
+- **Training Data (2026-10-30 retraining)**: `ml/data/processed/supervised_train.csv` — **70,560 rows** from the external benchmark dataset. The previous artifact was fitted on only **9** telemetry rows, which is far too few to define a stable "normal" region. The benchmark's `label` column is **not** used: Isolation Forest remains unsupervised; the larger table only supplies realistic feature distributions. Training uses the canonical feature order `ph, turbidity, tds, temperature`.
+- **Evaluation**: the regenerated report scores the held-out benchmark test split (**15,120 rows**); 4.81% were flagged at `contamination=0.05`. This is a distributional check, not a contamination rate — no ground-truth anomaly labels exist. `detect_anomalies.py` still scores live telemetry (currently 9 rows) and reports that count separately.
+- **No Lookahead**: Validation/test splits are **never** used during model fitting. The benchmark split is static (not chronological), so no future leakage is possible in fitting.
+- **Recalibration required**: this is an external-benchmark model. Re-fit on real calibrated site telemetry before relying on live anomaly scores.
 - **Reproducibility**: Default `random_state=42` ensures identical forest partitioning across runs.
 
 ### 3. Model Output & Schema (`anomaly_results.csv`)
@@ -124,6 +126,30 @@ python ml/scripts/export_sensor_data.py
 ```bash
 python ml/scripts/data_quality_report.py
 ```
+
+### 2b. Inspect External Datasets (measured)
+```bash
+python ml/scripts/inspect_datasets.py
+```
+
+Writes `ml/reports/dataset_inspection.json` / `.md`: per file columns, units, row counts,
+duplicates, missing values, label balance, feature ranges, station/time coverage and provenance.
+Licence/provenance is reported only where documented; the static benchmark's licence is marked
+**unable to verify** (confirm the source before redistribution). No dataset here changes a
+suitability verdict.
+
+### 2c. Model Artifact Manifest
+```bash
+python ml/scripts/write_model_manifest.py
+```
+
+Writes `ml/models/model_manifest.json` with each artifact's SHA-256, size, saved-with sklearn
+version, feature contract, live-inference status, training source, metrics copied from the
+generated evaluation report, and limitations. Missing artifacts are reported as absent.
+
+**Dependency pinning:** `ml/requirements.txt` pins `scikit-learn==1.4.2`. All three artifacts were
+retrained under 1.4.2 on 2026-10-30, so the previous 1.7.2 → 1.4.2 artifact skew is resolved
+(verified: loading each `.joblib` raises no `InconsistentVersionWarning`).
 
 ### 3. Clean Sensor Data
 ```bash
