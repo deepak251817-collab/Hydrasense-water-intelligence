@@ -36,7 +36,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Mapping, Optional
 
-from app.services import water_screening
+from app.services import recommendations, water_screening
 from app.services.screening_states import (
     CAUTION,
     INSUFFICIENT,
@@ -102,6 +102,10 @@ def evaluate(
     state = canonical_state(overall["status"], engine="screening")
     overall["state"] = state
     overall["state_label"] = state_label(state)
+
+    # Rule-based advice for non-passing results, derived only from the entries
+    # this assessment actually triggered (see app/services/recommendations.py).
+    result["recommendations"] = recommendations.for_screening(result)
     result["engine"] = {
         "name": "four-parameter screening engine",
         "version": water_screening.CRITERIA_VERSION,

@@ -69,6 +69,7 @@ from typing import Any, Iterable, Optional
 
 from sqlalchemy.orm import Session
 
+from app.services import recommendations
 from app.services.screening_states import canonical_state, state_label
 
 logger = logging.getLogger("hydrasense.suitability")
@@ -461,14 +462,28 @@ def _evaluate(criterion: Criterion, measurement: Measurement) -> dict:
         )
         if within_permissible:
             entry.update(
-                status="within_permissible",
-                status_label=STATUS_LABELS["within_permissible"],
+                status="within_permissible", status_label=STATUS_LABELS["within_permissible"],
                 note="Only the relaxed permissible limit is met; treatment or an alternate source is required.",
+                direction=_direction(criterion, value),
             )
             return entry
 
-    entry.update(status="outside_limits", status_label=STATUS_LABELS["outside_limits"])
+    entry.update(status="outside_limits", status_label=STATUS_LABELS["outside_limits"],
+                 direction=_direction(criterion, value))
     return entry
+
+
+def _direction(criterion: Criterion, value: float) -> str:
+    """Which side of the configured range this value breached.
+
+    Recommendations are keyed by (use, parameter, direction), so the engine
+    records the direction it actually evaluated rather than guessing later.
+    """
+    below = (
+        (criterion.acceptable_min is not None and value < criterion.acceptable_min)
+        or (criterion.permissible_min is not None and value < criterion.permissible_min)
+    )
+    return "below" if below else "above"
 
 
 def _result_code(use: UseSpec, evaluated: list[dict], freshness: str) -> str:
@@ -600,7 +615,7 @@ def assess_use(use: UseSpec, reading: Any, now: Optional[datetime] = None) -> di
                     "source": getattr(reading, "source", "unknown"),
                 })
 
-    return {
+    assessment: dict[str, Any] = {
         "use": use.code,
         "use_label": use.label,
         "description": use.description,
@@ -639,6 +654,10 @@ def assess_use(use: UseSpec, reading: Any, now: Optional[datetime] = None) -> di
             ],
         },
     }
+    # Rule-based advice derived from the rules this assessment actually
+    # triggered; empty when the result is within the configured ranges.
+    assessment["recommendations"] = recommendations.for_station_assessment(assessment)
+    return assessment
 
 
 def assess_reading(reading: Any, use_codes: Optional[Iterable[str]] = None,

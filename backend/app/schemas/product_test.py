@@ -5,6 +5,8 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.schemas.recommendations import RecommendationSet
+
 WaterSourceCode = Literal["tap", "borewell", "well", "tank", "surface", "other"]
 IntendedUseCode = Literal[
     "drinking", "domestic", "irrigation", "general", "swimming", "aquaculture"
@@ -141,6 +143,10 @@ class ProductTestAssessment(BaseModel):
     next_steps: List[str]
     prediction: PredictionStatus
     reference_profile: Dict[str, Any] = {}
+    # Rule-based advice derived from the triggered rules; empty when the result
+    # is within the configured ranges. Older stored assessments without the key
+    # simply default to an empty set.
+    recommendations: RecommendationSet = RecommendationSet()
 
 
 class ProductWaterTestResponse(BaseModel):

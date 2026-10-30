@@ -12,6 +12,7 @@ from app.schemas.ml_status import MLStatusResponse
 from app.schemas.product_test import LiveAssessmentResponse
 from app.schemas.suitability import StationSuitabilityResponse
 from app.schemas.user import UserResponse
+from app.services import recommendations
 from app.services.forecasting import build_forecast
 from app.services.live_assessment_service import build_live_assessment
 from app.services.ml_availability import availability_for
@@ -29,6 +30,21 @@ from app.schemas.water import (
 )
 
 router = APIRouter(prefix="/authority", tags=["Authority"])
+
+
+def _add_authority_actions(assessment: dict, *, use: str, state: str) -> None:
+    """Attach the incident workflow steps to an assessment's advice.
+
+    Public and product responses carry consumer advice only; the incident
+    steps (sample, upstream inspection, notify the pollution control authority,
+    track the lab result) are added exclusively on authority-only routes.
+    """
+    advice = assessment.get("recommendations") or {}
+    if advice.get("recommendations") or state != "within_configured_ranges":
+        advice["authority_actions"] = recommendations.authority_actions(
+            use=use, state=state
+        )
+        assessment["recommendations"] = advice
 
 
 def _ml_analysis_or_empty(reading: SensorReading, status: str) -> MLAnalysisResponse:
@@ -142,6 +158,12 @@ def get_station_suitability(
     )
     if reading is not None:
         persist_assessments(db, station.id, assessments)
+    for assessment in assessments:
+        _add_authority_actions(
+            assessment,
+            use=assessment["use"],
+            state=assessment["state"],
+        )
 
     return StationSuitabilityResponse(
         station_code=station.station_code,
@@ -225,9 +247,17 @@ def get_live_water_assessment(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Monitoring station with code '{station_code}' not found.",
         )
-    return build_live_assessment(
+    payload = build_live_assessment(
         db, station, use, aquaculture_context=aquaculture_context
     )
+    assessment = payload.get("assessment") or {}
+    overall = assessment.get("overall") or {}
+    _add_authority_actions(
+        assessment,
+        use=assessment.get("intended_use", use),
+        state=overall.get("state", ""),
+    )
+    return payload
 
 
 @router.get("/stations", response_model=List[MonitoringStationAuthorityResponse])

@@ -5,6 +5,8 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
+from app.schemas.recommendations import RecommendationSet
+
 
 class SuitabilityParameter(BaseModel):
     parameter: str
@@ -63,6 +65,9 @@ class WaterSuitabilityAssessmentResponse(BaseModel):
     measured_values: List[SuitabilityMeasuredValue]
     limitations: List[str]
     data_quality: SuitabilityDataQuality
+    # Advice derived from the rules this assessment triggered; empty when the
+    # result is within the configured ranges.
+    recommendations: RecommendationSet = RecommendationSet()
 
 
 class StationSuitabilityResponse(BaseModel):
