@@ -847,6 +847,39 @@ export interface MLStatusResponse {
   generated_at: string | null;
 }
 
+/** GET /authority/stations/{code}/qr — stable public URL + download formats. */
+export interface StationQrMetadata {
+  station_code: string;
+  station_name: string;
+  public_url: string;
+  formats: Record<string, string>;
+}
+
+/**
+ * Authenticated binary download (QR images/PDF). The JSON helper above cannot
+ * be reused because these responses are not JSON.
+ */
+async function fetchBlobAuth(endpoint: string, token: string): Promise<Blob> {
+  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    let detail = "Download failed";
+    try {
+      const data = await response.json();
+      const rawDetail = data?.detail;
+      detail =
+        typeof rawDetail === "string"
+          ? rawDetail
+          : rawDetail?.message || data?.message || detail;
+    } catch {
+      // Non-JSON error body; keep the generic message.
+    }
+    throw { detail, statusCode: response.status } as ApiError;
+  }
+  return response.blob();
+}
+
 export interface MonitoringStation {
   id: number;
   station_code: string;
@@ -1114,6 +1147,24 @@ export const authorityApi = {
   /** Model health + evaluation report (authority-only, read-only). */
   getMlStatus: (token: string) =>
     apiGetAuth<MLStatusResponse>("/authority/ml/status", token),
+
+  /** Stable public URL and available formats for a station QR code. */
+  getStationQr: (stationCode: string, token: string) =>
+    apiGetAuth<StationQrMetadata>(
+      `/authority/stations/${encodeURIComponent(stationCode)}/qr`,
+      token
+    ),
+
+  /** Download a server-generated QR (png | svg | pdf label). */
+  downloadStationQr: (
+    stationCode: string,
+    format: "png" | "svg" | "pdf",
+    token: string
+  ) =>
+    fetchBlobAuth(
+      `/authority/stations/${encodeURIComponent(stationCode)}/qr.${format}`,
+      token
+    ),
 
   /** Standards-based suitability screening for the latest station reading. */
   getStationSuitability: (stationCode: string, token: string) =>

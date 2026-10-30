@@ -11,6 +11,7 @@ import {
   FlaskConical, 
   Map, 
   LineChart, 
+  QrCode,
   X,
   ExternalLink
 } from "lucide-react";
@@ -31,6 +32,7 @@ export default function AuthoritySidebar({ isOpen, onClose }: AuthoritySidebarPr
     { to: "/authority/inspections", label: "Inspections", icon: ClipboardCheck },
     { to: "/authority/laboratory", label: "Laboratory", icon: FlaskConical },
     { to: "/authority/map", label: "Water Map", icon: Map },
+    { to: "/authority/qr", label: "Public QR", icon: QrCode },
     { to: "/authority/analytics", label: "Analytics", icon: LineChart },
   ];
 

@@ -80,6 +80,12 @@ class Settings(BaseSettings):
     NOTIFICATION_COOLDOWN_SECONDS: int = 900
     NOTIFICATION_MAX_PER_WINDOW: int = 10
 
+    # --- Public pages / QR ---------------------------------------------------
+    # Origin of the public web application used for QR deep links. Local
+    # development defaults to the Vite dev server; set this to the real public
+    # origin before printing QR codes.
+    PUBLIC_BASE_URL: str = "http://localhost:5173"
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

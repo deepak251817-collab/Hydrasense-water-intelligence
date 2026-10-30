@@ -34,6 +34,7 @@ import Laboratory from "../pages/authority/Laboratory";
 import WaterMap from "../pages/authority/WaterMap";
 import Analytics from "../pages/authority/Analytics";
 import StationDetail from "../pages/authority/StationDetail";
+import QrCodes from "../pages/authority/QrCodes";
 
 export const router = createBrowserRouter([
   {
@@ -205,6 +206,14 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requiredRole="AUTHORITY">
             <WaterMap />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "qr",
+        element: (
+          <ProtectedRoute requiredRole="AUTHORITY">
+            <QrCodes />
           </ProtectedRoute>
         ),
       },

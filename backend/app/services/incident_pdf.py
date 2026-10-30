@@ -89,7 +89,13 @@ def _paginate(lines: Sequence[Line]) -> List[List[Line]]:
     return pages
 
 
-def _page_stream(page: Sequence[Line], page_number: int, total_pages: int, footer: str) -> bytes:
+def _page_stream(
+    page: Sequence[Line],
+    page_number: int,
+    total_pages: int,
+    footer: str,
+    overlay_commands: Sequence[str] = (),
+) -> bytes:
     commands: List[str] = []
     y = PAGE_HEIGHT - MARGIN
     for text, size, resource in page:
@@ -105,6 +111,11 @@ def _page_stream(page: Sequence[Line], page_number: int, total_pages: int, foote
         "BT /F1 7.5 Tf 1 0 0 1 %.2f 26 Tm (%s) Tj ET"
         % (MARGIN, _safe_text(footer_text))
     )
+    # Vector overlays (used for QR modules) are drawn on the first page only.
+    if page_number == 1 and overlay_commands:
+        commands.append("q")
+        commands.extend(overlay_commands)
+        commands.append("Q")
     return "\n".join(commands).encode("cp1252", "replace")
 
 
@@ -113,8 +124,13 @@ def render_pdf(
     *,
     title: str = "HydraSense incident report",
     footer: str = "Preliminary screening, not a laboratory safety certification.",
+    overlay_commands: Sequence[str] = (),
 ) -> bytes:
-    """Render ``(text, style)`` paragraphs to PDF bytes."""
+    """Render ``(text, style)`` paragraphs to PDF bytes.
+
+    ``overlay_commands`` are raw PDF graphics commands appended to the first
+    page (for example black rectangles that draw a QR code).
+    """
 
     pages = _paginate(_layout(paragraphs))
     total_pages = len(pages)
@@ -158,7 +174,10 @@ def render_pdf(
                 % (PAGE_WIDTH, PAGE_HEIGHT, content_number)
             ).encode("ascii")
         )
-        stream = _page_stream(page, index + 1, total_pages, footer)
+        stream = _page_stream(
+            page, index + 1, total_pages, footer,
+            overlay_commands=overlay_commands if index == 0 else (),
+        )
         objects.append(
             b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream"
         )
