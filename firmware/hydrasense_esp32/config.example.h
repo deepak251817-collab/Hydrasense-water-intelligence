@@ -45,24 +45,48 @@
 // value and reports raw ADC + voltage in the diagnostics block instead. It
 // NEVER invents pH/NTU/ppm numbers from unmeasured constants.
 //
-// pH (two-point calibration with real buffer solutions):
+// pH (two-point calibration with real buffer solutions, measured at the
+// ADS1115 input — this IS the CAL_PH_Vx unit; fold in any divider yourself):
 //   Measure the probe voltage in pH 7.00 buffer  → CAL_PH_V7
-//   Measure the probe voltage in pH 4.00 buffer  → CAL_PH_V4
-//   Then set PH_CALIBRATED to 1.
+//   Measure the probe voltage in pH 4.01 buffer  → CAL_PH_V4 (must be > V7)
+//   Then set PH_CALIBRATED to 1. The firmware fits
+//   slope = (CAL_PH_V7 − CAL_PH_V4)/3 at boot and rejects an implausible fit.
+//   Example from real preliminary buffer measurements at an ADS1115 divider
+//   junction (UNVERIFIED — replace with your own fresh measurements):
+//     CAL_PH_V7 ≈ 1.246 V, CAL_PH_V4 ≈ 1.484 V  →  ≈ 79.3 mV/pH.
 #define PH_CALIBRATED        0
 #define CAL_PH_V7            2.50
 #define CAL_PH_V4            3.00
 
-// Turbidity (two-point with 0 NTU and a known standard, e.g. 100 NTU):
-// The firmware already publishes a LIVE provisional relative index (0-100)
-// from ADS1115 A2 that needs no calibration; these flags/constants are only
-// for a future real-NTU calibration. The index is NEVER labelled NTU.
+// pH slope temperature compensation (Nernst term) driven by the DS18B20.
+// Default OFF — enabling it changes screening inputs and must be recorded in
+// docs/FEATURE_STATUS.md together with a justification.
+#define PH_TEMP_COMPENSATION 0
+
+// Turbidity: the firmware already publishes a LIVE provisional relative index
+// (0-100) from ADS1115 A2 that needs no calibration; the index is NEVER
+// labelled NTU and is never compared with NTU limits. TURBIDITY_CALIBRATED is
+// currently a PLACEHOLDER: no NTU lookup table or conversion is implemented,
+// so setting it to 1 changes nothing except a boot-time reminder. A future
+// NTU upgrade must be built as a piecewise lookup from formazin/reference
+// standards (0, 20, 100, 800 NTU), not a single straight line.
 #define TURBIDITY_CALIBRATED 0
 #define CAL_TURB_V0          2.50
 #define CAL_TURB_V100        1.00
 
-// TDS: keep 0 until your exact TDS module model is confirmed. The voltage →
-// ppm conversion depends on the module's output characteristics; the firmware
-// deliberately does NOT guess it. After confirming the datasheet, implement
-// tdsConvert() in hydrasense_esp32.ino and flip this flag to 1.
+// TDS: set TDS_CALIBRATED to 1 ONLY after recording >= 4 real reference
+// standards below. The firmware fits a second-order polynomial (least
+// squares, checked against every point within +/−20%) through the standards
+// at boot; measurements are compensated to 25 °C with k = 1 + 0.02*(T−25)
+// using the DS18B20. Published values are NaCl-EQUIVALENT conductivity in
+// mg/L. Define BOTH of these in config.h when calibrating:
+//   const size_t TDS_CAL_COUNT  = 4;
+//   const float  TDS_CAL_POINTS[][2] = {   // {voltage_v_at_ADS1115, mg/L NaCl}
+//     {0.045f,    0.0f},    // distilled / rinsed probe in 0 mg/L solution
+//     {0.655f,  250.0f},
+//     {1.180f,  500.0f},
+//     {2.100f, 1000.0f},
+//   };
+// Example pair 0.655 V -> 250 mg/L is illustrative, NOT a datasheet value —
+// measure YOUR standards before enabling.
 #define TDS_CALIBRATED       0
