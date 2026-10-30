@@ -3,6 +3,7 @@ import { mockWaterSources } from "../../data/mockData";
 import WaterTrendChart from "../../components/authority/WaterTrendChart";
 import PredictionCard from "../../components/authority/PredictionCard";
 import ModelHealthCard from "../../components/authority/ModelHealthCard";
+import PrototypeBanner from "../../components/authority/PrototypeBanner";
 import { LineChart, Sparkles } from "lucide-react";
 
 export default function Analytics() {
@@ -12,6 +13,11 @@ export default function Analytics() {
 
   return (
     <div className="space-y-6">
+      <PrototypeBanner
+        feature="Trend charts and prediction preview"
+        missing="The model-health card uses the real /api/authority/ml/status report. The trend and prediction panels still use demonstration series; the honest baseline forecast endpoint (GET /api/authority/stations/{station_code}/forecast) should replace them."
+      />
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>

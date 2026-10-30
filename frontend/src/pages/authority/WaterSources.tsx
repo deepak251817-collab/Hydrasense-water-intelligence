@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { mockWaterSources } from "../../data/mockData";
 import WaterSourceCard from "../../components/authority/WaterSourceCard";
+import PrototypeBanner from "../../components/authority/PrototypeBanner";
 import { Droplets, Search, Filter, Plus, FileSpreadsheet } from "lucide-react";
 
 export default function WaterSources() {
@@ -17,6 +18,11 @@ export default function WaterSources() {
 
   return (
     <div className="space-y-6">
+      <PrototypeBanner
+        feature="Water source directory cards and filters"
+        missing="The backend exposes GET /api/authority/stations with real station identity, location and public warning; this directory should be rebuilt on it, and the map/detail pages should use station_code rather than demo identifiers."
+      />
+
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>

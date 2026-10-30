@@ -33,8 +33,8 @@ export default function MyChecks() {
       id: "demo-003",
       sourceName: "Cauvery River",
       intendedUse: "Irrigation",
-      screeningResult: "Measured indicators within configured screening ranges",
-      status: "Safe",
+      screeningResult: "Measured indicators within configured ranges (demo)",
+      status: "Demo pass",
       date: "Sample entry",
       details:
         "Sample record: TDS 348 mg/L against the project-configured screening reference. Demonstration data — screening is not a certification of fitness for irrigation.",
@@ -75,7 +75,7 @@ export default function MyChecks() {
       {/* Checks List */}
       <div className="space-y-4">
         {demoSavedChecks.map((check) => {
-          const isSafe = check.status === "Safe";
+          const passed = check.status === "Demo pass";
           return (
             <div
               key={check.id}
@@ -96,9 +96,11 @@ export default function MyChecks() {
                 </div>
 
                 <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold self-start ${
-                  isSafe ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-red-50 text-red-700 border border-red-200"
+                  passed
+                    ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                    : "bg-amber-50 text-amber-700 border border-amber-200"
                 }`}>
-                  {isSafe ? <CheckCircle2 className="h-3.5 w-3.5" /> : <ShieldAlert className="h-3.5 w-3.5" />}
+                  {passed ? <CheckCircle2 className="h-3.5 w-3.5" /> : <ShieldAlert className="h-3.5 w-3.5" />}
                   <span>{check.screeningResult}</span>
                 </span>
               </div>

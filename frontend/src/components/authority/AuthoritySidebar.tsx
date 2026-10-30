@@ -1,6 +1,5 @@
 import { NavLink, Link } from "react-router-dom";
 import Logo from "../shared/Logo";
-import { mockSensorProbes } from "../../data/mockData";
 import { 
   LayoutDashboard, 
   Droplets, 
@@ -129,10 +128,10 @@ export default function AuthoritySidebar({ isOpen, onClose }: AuthoritySidebarPr
           <div className="rounded-xl bg-slate-900/60 p-3 border border-slate-800/60">
             <div className="flex items-center gap-2 text-[11px] font-bold text-slate-300">
               <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-              <span>Monitoring system online</span>
+              <span>Screening pipeline ready</span>
             </div>
             <p className="mt-1 text-[10px] text-slate-500 font-medium">
-              Mesh Telemetry Synced • {mockSensorProbes.length} Probes
+              Threshold profile served by the backend
             </p>
           </div>
         </div>

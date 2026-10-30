@@ -45,6 +45,22 @@ def _latest_reading(db: Session, station: MonitoringStation) -> Optional[SensorR
     )
 
 
+@router.get("/stations", response_model=List[MonitoringStationPublicResponse])
+def list_public_stations(db: Session = Depends(get_db)):
+    """Active monitoring stations for the public QR/check pages.
+
+    Public-safe: station identity, location, public warning and water-source
+    metadata only — no diagnostics, credentials or private records.
+    """
+    return (
+        db.query(MonitoringStation)
+        .options(joinedload(MonitoringStation.water_source))
+        .filter(MonitoringStation.is_active.is_(True))
+        .order_by(MonitoringStation.station_code.asc())
+        .all()
+    )
+
+
 @router.get("/stations/{station_code}", response_model=MonitoringStationPublicResponse)
 def get_public_station(station_code: str, db: Session = Depends(get_db)):
     return _get_station_or_404(station_code, db)

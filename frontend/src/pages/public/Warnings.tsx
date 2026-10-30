@@ -1,5 +1,6 @@
 import { mockWaterSources } from "../../data/mockData";
 import WarningBanner from "../../components/public/WarningBanner";
+import DemoDataNotice from "../../components/public/DemoDataNotice";
 import { BellRing, Info } from "lucide-react";
 
 export default function Warnings() {
@@ -9,6 +10,11 @@ export default function Warnings() {
 
   return (
     <div className="mx-auto max-w-5xl py-8 px-4 sm:px-6 lg:px-8 space-y-8">
+      <DemoDataNotice>
+        Live public warnings are served per station from the backend; these
+        demonstration entries are not current advisories and must not be acted on.
+      </DemoDataNotice>
+
       {/* Header */}
       <div>
         <div className="inline-flex items-center gap-2 rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-900">

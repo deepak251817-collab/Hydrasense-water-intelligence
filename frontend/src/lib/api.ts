@@ -896,8 +896,14 @@ export interface MonitoringStation {
   water_source: WaterSourceResponse;
 }
 
+/** Public-safe station listing (no diagnostics or credentials). */
+export type PublicStation = Omit<MonitoringStation, "water_source_id">;
+
 // Public API (no auth required)
 export const publicApi = {
+  /** Active stations for the public check/QR pages. */
+  getStations: () => apiGet<PublicStation[]>("/public/stations"),
+
   getStationByCode: (stationCode: string) =>
     apiGet<MonitoringStation>(`/public/stations/${stationCode}`),
 

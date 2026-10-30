@@ -518,7 +518,9 @@ describe("Four physical sensors — Dissolved Oxygen removed from hardware monit
     );
     fireEvent.click(screen.getByRole("button", { name: "Live Readings" }));
 
-    const cards = screen.getAllByText(/Within configured range|Outside configured range/);
+    // The page must not claim a live pass/fail verdict from demo values; it
+    // now labels all four tiles as demonstration values.
+    const cards = screen.getAllByText("Demo value — not a live assessment");
     expect(cards).toHaveLength(4);
     expect(screen.getByText("pH Level")).toBeInTheDocument();
     expect(screen.getByText("Turbidity Index")).toBeInTheDocument();

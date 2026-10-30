@@ -1,254 +1,247 @@
-import { useState } from "react";
-import { 
-  waterUseOptions, 
-  mockWaterSources 
-} from "../../data/mockData";
+import { useEffect, useState } from "react";
+import { waterUseOptions } from "../../data/mockData";
 import type { WaterUseCategory } from "../../data/mockData";
 import WaterUseCard from "../../components/public/WaterUseCard";
-import { 
-  CheckCircle2, 
-  AlertTriangle, 
-  ShieldAlert, 
-  Sparkles, 
-  RotateCcw, 
-  Info, 
-  FileCheck2,
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Info,
+  Loader2,
   MapPin,
-  ArrowRight
+  RotateCcw,
+  ShieldAlert,
+  ShieldCheck,
+  Sparkles,
 } from "lucide-react";
 import { Link } from "react-router-dom";
+import type {
+  ApiError,
+  PublicStation,
+  WaterSuitabilityAssessment,
+} from "../../lib/api";
+import { publicApi } from "../../lib/api";
+
+/** Maps the UI use cards to the backend's supported screening profiles. */
+const USE_TO_API: Record<WaterUseCategory["id"], string> = {
+  drinking: "drinking",
+  domestic: "domestic",
+  irrigation: "irrigation",
+  recreation: "swimming",
+  aquaculture: "aquaculture",
+};
+
+const RESULT_STYLES: Record<string, string> = {
+  preliminary_suitable: "bg-emerald-50 border-emerald-200 text-emerald-900",
+  treatment_required: "bg-amber-50 border-amber-200 text-amber-900",
+  outside_limits: "bg-red-50 border-red-200 text-red-900",
+  lab_confirmation_required: "bg-cyan-50 border-cyan-200 text-cyan-900",
+  insufficient_data: "bg-slate-50 border-slate-200 text-slate-800",
+};
+
+const PARAMETER_STYLES: Record<string, string> = {
+  within_acceptable: "bg-emerald-100 text-emerald-700 border-emerald-200",
+  within_permissible: "bg-amber-100 text-amber-700 border-amber-200",
+  outside_limits: "bg-red-100 text-red-700 border-red-200",
+  not_measured: "bg-slate-100 text-slate-600 border-slate-200",
+  not_comparable: "bg-amber-50 text-amber-700 border-amber-200",
+};
+
+function warningStyles(warning: string): string {
+  switch (warning) {
+    case "CRITICAL":
+      return "bg-red-100 text-red-700";
+    case "WARNING":
+    case "CAUTION":
+      return "bg-amber-100 text-amber-700";
+    default:
+      return "bg-emerald-100 text-emerald-700";
+  }
+}
+
+function scoreLabel(value: number | null | undefined, unit = ""): string {
+  if (value === null || value === undefined) return "not measured";
+  return `${Number.isInteger(value) ? value : value.toFixed(2)}${unit ? ` ${unit}` : ""}`;
+}
 
 export default function WaterCheck() {
+  const [stations, setStations] = useState<PublicStation[]>([]);
+  const [stationCode, setStationCode] = useState<string>("");
   const [selectedUse, setSelectedUse] = useState<WaterUseCategory["id"]>("drinking");
-  const [selectedSourceId, setSelectedSourceId] = useState<string>("source-tg-halli");
-  const [isChecking, setIsChecking] = useState<boolean>(false);
-  const [hasResult, setHasResult] = useState<boolean>(false);
+  const [loadingStations, setLoadingStations] = useState(true);
+  const [loadingResult, setLoadingResult] = useState(false);
+  const [stationError, setStationError] = useState<string | null>(null);
+  const [resultError, setResultError] = useState<string | null>(null);
+  const [assessments, setAssessments] = useState<WaterSuitabilityAssessment[] | null>(
+    null
+  );
+  const [requestedUse, setRequestedUse] = useState<WaterUseCategory["id"] | null>(null);
+  const [rulesetVersion, setRulesetVersion] = useState<string | null>(null);
 
-  const selectedUseOption = waterUseOptions.find((u) => u.id === selectedUse) || waterUseOptions[0];
-  const selectedSource = mockWaterSources.find((s) => s.id === selectedSourceId) || mockWaterSources[0];
-
-  const handleStartCheck = () => {
-    setIsChecking(true);
-    setTimeout(() => {
-      setIsChecking(false);
-      setHasResult(true);
-    }, 600);
-  };
-
-  const getScreeningResult = () => {
-    // Generate realistic contextual screening result
-    if (selectedUse === "drinking") {
-      if (selectedSource.risk === "Stable") {
-        return {
-          status: "CAUTION — TREATMENT REQUIRED",
-          badgeColor: "bg-amber-100 text-amber-800 border-amber-300",
-          icon: AlertTriangle,
-          headline: "Preliminary Screening: Treatment Advised",
-          why: [
-            "Raw river water requires secondary disinfection and filtration before potable use.",
-            `The relative turbidity index is ${selectedSource.turbidity} / 100 (higher = cloudier, not NTU); NTU compliance needs a calibrated instrument.`,
-            "Microbiological parameters (e.g., coliform bacteria) cannot be measured by these sensors alone.",
-          ],
-          recommendation: "Boiling, certified multi-stage RO/UV filtration, or authorized municipal pipeline treatment is required before drinking.",
-        };
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await publicApi.getStations();
+        if (cancelled) return;
+        setStations(rows);
+        setStationCode((current) => current || rows[0]?.station_code || "");
+      } catch (err) {
+        if (cancelled) return;
+        setStationError((err as ApiError).detail || "Failed to load stations.");
+      } finally {
+        if (!cancelled) setLoadingStations(false);
       }
-      return {
-        status: "NOT RECOMMENDED FOR DRINKING",
-        badgeColor: "bg-red-100 text-red-800 border-red-300",
-        icon: ShieldAlert,
-        headline: "High Risk for Direct Consumption",          why: [
-            `The relative turbidity index is ${selectedSource.turbidity} / 100 (CLOUDIER demo band ≥ 55), indicating high suspended solids.`,
-            `Recent water-quality telemetry is ${selectedSource.trendDirection} at this location.`,
-            `Current Health Index rating is ${selectedSource.healthScore}/100 with elevated total dissolved solids (${selectedSource.tds} mg/L).`,
-          ],
-        recommendation: "Avoid direct consumption. Do not use for drinking or culinary preparation without certified laboratory verification and high-grade purification.",
-      };
-    }
-
-    if (selectedUse === "domestic") {
-      if (selectedSource.risk === "Critical") {
-        return {
-          status: "RESTRICTED DOMESTIC USE",
-          badgeColor: "bg-red-100 text-red-800 border-red-300",
-          icon: ShieldAlert,
-          headline: "Severe Water Condition",
-          why: [
-            "A high turbidity index and elevated TDS indicate heavy suspended and dissolved loads.",
-            "Water may cause skin irritation or stain washing fixtures.",
-          ],
-          recommendation: "Do not use for bathing, washing utensils, or laundry until public advisories are lifted.",
-        };
-      }
-      return {
-        status: "CAUTION — SUITABLE WITH CARE",
-        badgeColor: "bg-amber-100 text-amber-800 border-amber-300",
-        icon: AlertTriangle,
-        headline: "Acceptable for Non-Potable Domestic Tasks",
-        why: [
-          "pH level and conductivity are within general domestic washing guidelines.",
-          "Settling or pre-filtration is recommended to remove particulate matter.",
-        ],
-        recommendation: "Suitable for cleaning and outdoor maintenance. Basic filtration recommended for laundry.",
-      };
-    }
-
-    if (selectedUse === "irrigation") {
-      if (selectedSource.risk === "Critical") {
-        return {
-          status: "RESTRICTED FOR EDIBLE CROPS",
-          badgeColor: "bg-orange-100 text-orange-800 border-orange-300",
-          icon: AlertTriangle,
-          headline: "High Salinity & Turbidity Risk",
-          why: [
-            `TDS level (${selectedSource.tds} mg/L) may cause salt buildup in soil.`,
-            "Runoff contamination could harm sensitive plant root systems.",
-          ],
-          recommendation: "Restrict to non-edible landscaping. Flush soil periodically with clean water.",
-        };
-      }
-      return {
-        status: "ACCEPTABLE FOR IRRIGATION",
-        badgeColor: "bg-emerald-100 text-emerald-800 border-emerald-300",
-        icon: CheckCircle2,
-        headline: "Normal Agricultural Suitability",
-        why: [
-          "TDS and pH are within standard agricultural tolerance ranges.",
-          "Dissolved nutrients and minerals support general vegetation growth.",
-        ],
-        recommendation: "Good for general crops, community garden watering, and lawn irrigation.",
-      };
-    }
-
-    if (selectedUse === "recreation") {
-      if (selectedSource.risk === "Critical" || selectedSource.risk === "High") {
-        return {
-          status: "SWIMMING & CONTACT NOT ADVISED",
-          badgeColor: "bg-red-100 text-red-800 border-red-300",
-          icon: ShieldAlert,
-          headline: "Recreational Contact Warning Active",
-          why: [
-            "The turbidity index is in the CLOUDIER demo band; microbiological risk cannot be assessed with these sensors.",
-            "Algal blooms or bacterial proliferation require laboratory testing to rule out.",
-          ],
-          recommendation: "Avoid full body immersion swimming or skin contact. Secondary contact boating permitted with caution.",
-        };
-      }
-      return {
-        status: "CAUTION FOR RECREATION",
-        badgeColor: "bg-amber-100 text-amber-800 border-amber-300",
-        icon: AlertTriangle,
-        headline: "Moderate Contact Permissible",
-        why: [
-          "Water clarity is moderate.",
-          "Check local municipal signs before swimming.",
-        ],
-        recommendation: "Rinse with fresh clean tap water after recreational skin exposure.",
-      };
-    }
-
-    // Aquaculture default — no dissolved-oxygen / ammonia / salinity sensors,
-    // so no suitability verdict can be produced from four readings.
-    return {
-      status: "INSUFFICIENT PARAMETERS",
-      badgeColor: "bg-slate-100 text-slate-700 border-slate-300",
-      icon: ShieldAlert,
-      headline: "Insufficient parameters for aquaculture",
-      why: [
-        "Dissolved oxygen, ammonia, nitrite and salinity are not measured by this hardware, and no species-specific criteria are configured.",
-        `Available readings: pH ${selectedSource.pH}, TDS ${selectedSource.tds} mg/L, temperature ${selectedSource.temperature} °C, turbidity index ${selectedSource.turbidity} / 100 (not NTU).`,
-      ],
-      recommendation: "Measure dissolved oxygen and the species-specific water-chemistry parameters before stocking or maintaining aquatic culture.",
+    })();
+    return () => {
+      cancelled = true;
     };
+  }, []);
+
+  const selectedStation = stations.find((station) => station.station_code === stationCode);
+  const selectedUseOption =
+    waterUseOptions.find((use) => use.id === selectedUse) || waterUseOptions[0];
+
+  const handleStartCheck = async () => {
+    if (!stationCode) return;
+    setLoadingResult(true);
+    setResultError(null);
+    setAssessments(null);
+    try {
+      const response = await publicApi.getSuitability(stationCode);
+      setAssessments(response.assessments);
+      setRulesetVersion(response.ruleset_version);
+      setRequestedUse(selectedUse);
+    } catch (err) {
+      setResultError(
+        (err as ApiError).detail || "The screening assessment is unavailable."
+      );
+    } finally {
+      setLoadingResult(false);
+    }
   };
 
-  const result = getScreeningResult();
-  const ResultIcon = result.icon;
+  const activeAssessment =
+    assessments?.find((item) => item.use === USE_TO_API[requestedUse ?? selectedUse]) ??
+    null;
+  const resultStyles = activeAssessment
+    ? RESULT_STYLES[activeAssessment.result] ?? RESULT_STYLES.insufficient_data
+    : RESULT_STYLES.insufficient_data;
 
   return (
     <div className="mx-auto max-w-5xl py-8 px-4 sm:px-6 lg:px-8 space-y-8">
-      {/* Page Header */}
+      {/* Page header */}
       <div>
         <div className="inline-flex items-center gap-2 rounded-full bg-cyan-100 px-3 py-1 text-xs font-bold text-cyan-800">
-          <FileCheck2 className="h-3.5 w-3.5 text-cyan-700" />
-          <span>Intended-Use Water Screening</span>
+          <ShieldCheck className="h-3.5 w-3.5 text-cyan-700" />
+          <span>Intended-Use Screening</span>
         </div>
         <h1 className="mt-2 text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900">
           Check Water Suitability
         </h1>
         <p className="mt-1 text-sm text-slate-500 max-w-2xl leading-relaxed">
-          Select your intended use and reference water source to get an instantaneous, easy-to-understand screening of current water conditions.
+          Select a monitored station and what you intend to use the water for. The
+          result comes from the central backend screening engine using only the four
+          measured parameters: pH, TDS, temperature and the relative turbidity index.
         </p>
       </div>
 
-      {/* Mandatory Regulatory Disclaimer Alert */}
-      <div className="rounded-2xl border border-amber-200 bg-amber-50/80 p-4.5 text-xs text-amber-950 flex items-start gap-3">
+      {/* Honest scope notice */}
+      <div className="rounded-2xl border border-amber-200 bg-amber-50/80 p-4 text-xs text-amber-950 flex items-start gap-3">
         <Info className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
         <div className="space-y-1">
-          <p className="font-bold text-amber-900">Important Screening Notice</p>
+          <p className="font-bold text-amber-900">Preliminary screening, not a certification</p>
           <p className="leading-relaxed text-amber-800">
-            This is a screening result based on parameters currently measured by HydraSense IoT sensor nodes. 
-            <strong> It does not replace laboratory testing or statutory water-safety certification.</strong>
+            The turbidity sensor reports a relative 0–100 index, not calibrated NTU, so
+            NTU-based turbidity limits cannot be applied. Microbiological, heavy-metal and
+            other chemical hazards are not measured by this hardware. Every result states
+            which required tests are still missing.
           </p>
         </div>
       </div>
 
-      {/* Step 1: Choose Water Source */}
+      {/* Step 1: station */}
       <div className="rounded-3xl border border-slate-200 bg-white p-6 sm:p-8 shadow-xs space-y-4">
         <div className="flex items-center justify-between border-b border-slate-100 pb-4">
           <div>
-            <span className="text-[10px] font-bold uppercase tracking-widest text-cyan-700">Step 1</span>
+            <span className="text-[10px] font-bold uppercase tracking-widest text-cyan-700">
+              Step 1
+            </span>
             <h2 className="text-lg font-bold text-slate-900 tracking-tight mt-0.5">
-              Select Monitored Water Body
+              Select monitored station
             </h2>
           </div>
-          <span className="text-xs font-medium text-slate-400">5 Monitored Locations</span>
+          {!loadingStations && stations.length > 0 && (
+            <span className="text-xs font-medium text-slate-400">
+              {stations.length} public station{stations.length === 1 ? "" : "s"}
+            </span>
+          )}
         </div>
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {mockWaterSources.map((source) => (
-            <button
-              key={source.id}
-              type="button"
-              onClick={() => {
-                setSelectedSourceId(source.id);
-                setHasResult(false);
-              }}
-              className={`flex items-start justify-between rounded-xl p-3.5 border text-left transition-all ${
-                selectedSourceId === source.id
-                  ? "border-cyan-600 bg-cyan-50/40 ring-2 ring-cyan-600/20"
-                  : "border-slate-200 hover:border-slate-300 bg-white"
-              }`}
-            >
-              <div>
-                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                  {source.type}
-                </span>
-                <h4 className="text-sm font-bold text-slate-900 mt-0.5">
-                  {source.name}
-                </h4>
-                <div className="mt-1 flex items-center gap-1 text-[11px] text-slate-500">
-                  <MapPin className="h-3 w-3" />
-                  <span>{source.location}</span>
+        {loadingStations ? (
+          <div className="flex items-center gap-2 text-sm text-slate-500">
+            <Loader2 className="h-4 w-4 animate-spin text-cyan-600" />
+            Loading stations…
+          </div>
+        ) : stationError ? (
+          <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800">
+            <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+            <span>{stationError}</span>
+          </div>
+        ) : stations.length === 0 ? (
+          <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-500">
+            No public stations are available yet. Values appear after a station is
+            registered and a device reports readings.
+          </p>
+        ) : (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {stations.map((station) => (
+              <button
+                key={station.station_code}
+                type="button"
+                onClick={() => {
+                  setStationCode(station.station_code);
+                  setAssessments(null);
+                  setResultError(null);
+                }}
+                className={`flex items-start justify-between rounded-xl p-3.5 border text-left transition-all ${
+                  stationCode === station.station_code
+                    ? "border-cyan-600 bg-cyan-50/40 ring-2 ring-cyan-600/20"
+                    : "border-slate-200 hover:border-slate-300 bg-white"
+                }`}
+              >
+                <div>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                    {station.water_source.source_type}
+                  </span>
+                  <h4 className="text-sm font-bold text-slate-900 mt-0.5">
+                    {station.station_name}
+                  </h4>
+                  <div className="mt-1 flex items-center gap-1 text-[11px] text-slate-500">
+                    <MapPin className="h-3 w-3" />
+                    <span>{station.location}</span>
+                  </div>
+                  <p className="mt-1 text-[10px] font-mono text-slate-400">
+                    {station.station_code}
+                  </p>
                 </div>
-              </div>
-
-              <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider ${
-                source.risk === "Critical" ? "bg-red-100 text-red-700" :
-                source.risk === "High" ? "bg-orange-100 text-orange-700" :
-                source.risk === "Watch" ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"
-              }`}>
-                {source.risk}
-              </span>
-            </button>
-          ))}
-        </div>
+                <span
+                  className={`rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider ${warningStyles(station.public_warning)}`}
+                >
+                  {station.public_warning}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
-      {/* Step 2: Choose Intended Use */}
+      {/* Step 2: intended use */}
       <div className="rounded-3xl border border-slate-200 bg-white p-6 sm:p-8 shadow-xs space-y-4">
         <div className="flex items-center justify-between border-b border-slate-100 pb-4">
           <div>
-            <span className="text-[10px] font-bold uppercase tracking-widest text-cyan-700">Step 2</span>
+            <span className="text-[10px] font-bold uppercase tracking-widest text-cyan-700">
+              Step 2
+            </span>
             <h2 className="text-lg font-bold text-slate-900 tracking-tight mt-0.5">
               What will you use this water for?
             </h2>
@@ -264,110 +257,203 @@ export default function WaterCheck() {
               isSelected={selectedUse === useOption.id}
               onSelect={(id) => {
                 setSelectedUse(id);
-                setHasResult(false);
+                setAssessments(null);
+                setResultError(null);
               }}
             />
           ))}
         </div>
 
-        {/* Start Check Trigger CTA */}
         <div className="pt-4 flex flex-col sm:flex-row items-center justify-between gap-4 border-t border-slate-100">
           <div className="text-xs text-slate-500">
-            Selected: <strong className="text-slate-800">{selectedUseOption.title}</strong> at <strong className="text-slate-800">{selectedSource.name}</strong>
+            Selected: <strong className="text-slate-800">{selectedUseOption.title}</strong>
+            {selectedStation ? (
+              <>
+                {" "}at <strong className="text-slate-800">{selectedStation.station_name}</strong>
+              </>
+            ) : null}
           </div>
-
           <button
             type="button"
-            onClick={handleStartCheck}
-            disabled={isChecking}
-            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl bg-cyan-600 px-8 py-3.5 text-sm font-bold text-white shadow-md hover:bg-cyan-500 transition-all cursor-pointer disabled:opacity-50"
+            onClick={() => void handleStartCheck()}
+            disabled={loadingResult || !stationCode}
+            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl bg-cyan-600 px-8 py-3.5 text-sm font-bold text-white shadow-md hover:bg-cyan-500 transition-all disabled:opacity-50"
           >
-            {isChecking ? (
+            {loadingResult ? (
               <>
-                <Sparkles className="h-4 w-4 animate-spin" />
-                <span>Screening Water Parameters...</span>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span>Assessing measured parameters…</span>
               </>
             ) : (
               <>
-                <CheckCircle2 className="h-4.5 w-4.5" />
-                <span>Start Water Check</span>
+                <Sparkles className="h-4 w-4" />
+                <span>Run screening</span>
               </>
             )}
           </button>
         </div>
       </div>
 
-      {/* Step 3: Screening Result Modal/Card */}
-      {hasResult && (
-        <div className="rounded-3xl border-2 border-cyan-500 bg-white p-6 sm:p-8 shadow-xl space-y-6 animate-in fade-in duration-300">
+      {resultError && (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+          {resultError}
+        </div>
+      )}
+
+      {/* Step 3: backend result */}
+      {assessments && (
+        <div className="rounded-3xl border-2 border-cyan-500 bg-white p-6 sm:p-8 shadow-xl space-y-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-5">
             <div>
               <span className="text-[10px] font-extrabold uppercase tracking-widest text-cyan-700">
-                HydraSense Screening Result
+                HydraSense screening result
               </span>
               <h2 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight mt-0.5">
-                {result.headline}
+                {activeAssessment?.result_label ?? "No supported screening profile"}
               </h2>
               <p className="text-xs text-slate-500 mt-1">
-                Evaluation for <strong>{selectedUseOption.title}</strong> at <strong>{selectedSource.name}</strong>
+                {selectedStation?.station_name} · {selectedUseOption.title} · ruleset{" "}
+                {rulesetVersion ?? "—"}
               </p>
             </div>
-
-            <span className={`inline-flex items-center gap-2 rounded-full border px-4 py-1.5 text-xs font-extrabold uppercase tracking-wider ${result.badgeColor}`}>
-              <ResultIcon className="h-4 w-4" />
-              <span>{result.status}</span>
-            </span>
+            {activeAssessment && (
+              <span
+                className={`inline-flex items-center gap-2 rounded-full border px-4 py-1.5 text-xs font-extrabold uppercase tracking-wider ${resultStyles}`}
+                data-testid="screening-result"
+                data-result={activeAssessment.result}
+              >
+                {activeAssessment.result === "preliminary_suitable" ? (
+                  <CheckCircle2 className="h-4 w-4" />
+                ) : activeAssessment.result === "outside_limits" ? (
+                  <ShieldAlert className="h-4 w-4" />
+                ) : (
+                  <AlertTriangle className="h-4 w-4" />
+                )}
+                <span>{activeAssessment.result.replace(/_/g, " ")}</span>
+              </span>
+            )}
           </div>
 
-          {/* Why Explanation Section */}
-          <div className="space-y-3">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">
-              Why this screening result?
-            </h3>
-            <ul className="space-y-2">
-              {result.why.map((reason, idx) => (
-                <li key={idx} className="flex items-start gap-2.5 text-xs text-slate-700 leading-relaxed">
-                  <div className="h-1.5 w-1.5 rounded-full bg-cyan-600 shrink-0 mt-1.5" />
-                  <span>{reason}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          {/* Recommendation Box */}
-          <div className="rounded-2xl border border-cyan-100 bg-cyan-50/50 p-5">
-            <div className="flex items-center gap-2 text-cyan-900 font-bold text-xs uppercase tracking-wider">
-              <Sparkles className="h-4 w-4 text-cyan-700" />
-              <span>Recommended Action</span>
+          {!activeAssessment ? (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+              The backend returned no screening profile for this intended use. It is
+              reported as unsupported rather than manufactured from partial data.
             </div>
-            <p className="mt-2 text-sm text-slate-800 font-medium leading-relaxed">
-              {result.recommendation}
-            </p>
-          </div>
+          ) : (
+            <>
+              <p className="text-sm text-slate-700 leading-relaxed">
+                {activeAssessment.summary}
+              </p>
 
-          {/* Critical Disclaimer Notice */}
+              <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+                <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 font-bold">
+                  {activeAssessment.data_quality.freshness.replace(/_/g, " ")}
+                </span>
+                {activeAssessment.data_quality.age_seconds !== null && (
+                  <span>Reading age: {Math.round(activeAssessment.data_quality.age_seconds)} s</span>
+                )}
+                {activeAssessment.data_quality.device_source && (
+                  <span>Source: {activeAssessment.data_quality.device_source}</span>
+                )}
+              </div>
+
+              <div>
+                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                  Measured parameters and applied rules
+                </h3>
+                <div className="mt-2 overflow-x-auto">
+                  <table className="w-full min-w-[520px] text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-slate-100 text-[10px] uppercase tracking-wider text-slate-400">
+                        <th className="py-1.5 pr-3 font-bold">Parameter</th>
+                        <th className="py-1.5 pr-3 font-bold">Measured</th>
+                        <th className="py-1.5 pr-3 font-bold">Reference criterion</th>
+                        <th className="py-1.5 font-bold">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {activeAssessment.parameters.map((parameter) => (
+                        <tr key={parameter.parameter} className="border-b border-slate-50 align-top">
+                          <td className="py-2 pr-3 font-semibold text-slate-700">
+                            {parameter.label}
+                          </td>
+                          <td className="py-2 pr-3 text-slate-600">
+                            {scoreLabel(parameter.value, parameter.unit)}
+                          </td>
+                          <td className="py-2 pr-3 text-slate-500">{parameter.reference}</td>
+                          <td className="py-2">
+                            <span
+                              className={`inline-block rounded-full border px-2 py-0.5 text-[10px] font-bold ${PARAMETER_STYLES[parameter.status] ?? PARAMETER_STYLES.not_measured}`}
+                            >
+                              {parameter.status_label}
+                            </span>
+                            {parameter.note && (
+                              <p className="mt-1 text-[10px] text-slate-400">{parameter.note}</p>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {activeAssessment.missing_parameters.length > 0 && (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600">
+                    Required tests still missing
+                  </h3>
+                  <ul className="mt-2 space-y-1.5">
+                    {activeAssessment.missing_parameters.map((missing) => (
+                      <li key={missing.parameter} className="flex items-start gap-2 text-[11px] text-slate-600">
+                        <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" />
+                        <span>
+                          <strong className="font-semibold text-slate-700">{missing.label}</strong> — {missing.why}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {activeAssessment.limitations.length > 0 && (
+                <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                  {activeAssessment.limitations.map((limitation) => (
+                    <p key={limitation} className="text-[11px] leading-relaxed text-slate-500">
+                      {limitation}
+                    </p>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-[11px] text-slate-500 leading-relaxed">
-            <strong>HydraSense Certification Notice:</strong> This screening represents real-time sensor parameters (pH, Turbidity, TDS, Temperature, DO) calibrated against public guidelines. Chemical residues, microbial counts, or heavy metals must be verified through certified laboratory testing before high-consequence usage.
+            <strong>Scope notice:</strong> this is a rule-based screening of the four
+            measured parameters against a documented threshold profile. It is not a
+            laboratory certificate, does not confirm the water is safe to drink, and
+            cannot detect microbiological or chemical hazards that these sensors do not
+            measure. The turbidity sensor is a relative index until calibrated against
+            NTU references.
           </div>
 
-          {/* Footer Actions */}
           <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
             <button
               type="button"
-              onClick={() => setHasResult(false)}
+              onClick={() => setAssessments(null)}
               className="inline-flex items-center gap-2 text-xs font-bold text-slate-500 hover:text-slate-900"
             >
               <RotateCcw className="h-3.5 w-3.5" />
-              <span>Check another use or water source</span>
+              Check another use or station
             </button>
-
-            <Link
-              to="/public/sources"
-              className="inline-flex items-center gap-1.5 text-xs font-bold text-cyan-700 hover:text-cyan-800"
-            >
-              <span>Explore nearby monitored lakes</span>
-              <ArrowRight className="h-3.5 w-3.5" />
-            </Link>
+            {selectedStation && (
+              <Link
+                to={`/public/source/${selectedStation.station_code}`}
+                className="text-xs font-bold text-cyan-700 hover:text-cyan-800"
+              >
+                Open station page →
+              </Link>
+            )}
           </div>
         </div>
       )}

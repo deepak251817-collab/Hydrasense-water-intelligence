@@ -39,6 +39,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import MlLatestCard from "../../components/authority/MlLatestCard";
+import PrototypeBanner from "../../components/authority/PrototypeBanner";
 
 type Section =
   | "overview"
@@ -109,6 +110,11 @@ export default function StationDetail() {
 
   return (
     <div className="space-y-6">
+      <PrototypeBanner
+        feature="Station overview, live reading tiles, trends, incidents, inspections, laboratory records, sensor health and audit history"
+        missing="Only the AI Analysis tab is backend-driven. This page still uses demo station identifiers and fabricated values, and its pass/fail labels are client-side comparisons — they are not the central suitability result. Rebuild it on station_code, the latest-reading endpoint, the shared suitability engine, real alerts and real incidents before operational use."
+      />
+
       {/* Back + Header */}
       <div>
         <Link
@@ -208,8 +214,8 @@ export default function StationDetail() {
                   <p className={`text-2xl font-extrabold ${normal ? "text-slate-900" : "text-red-700"}`}>
                     {value}{unit}
                   </p>
-                  <p className={`text-xs mt-1 font-semibold ${normal ? "text-emerald-600" : "text-red-500"}`}>
-                    {normal ? "Within configured range" : "Outside configured range"}
+                  <p className="text-xs mt-1 font-semibold text-slate-400">
+                    Demo value — not a live assessment
                   </p>
                 </div>
               ))}

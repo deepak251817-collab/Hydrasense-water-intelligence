@@ -12,6 +12,7 @@ import PredictionCard from "../../components/authority/PredictionCard";
 import AlertPanel from "../../components/authority/AlertPanel";
 import SensorHealth from "../../components/authority/SensorHealth";
 import MlSummaryCard from "../../components/authority/MlSummaryCard";
+import PrototypeBanner from "../../components/authority/PrototypeBanner";
 import type { MonitoringStation } from "../../lib/api";
 import { authorityApi } from "../../lib/api";
 import { getToken } from "../../lib/auth";
@@ -58,6 +59,11 @@ export default function CommandCenter() {
 
   return (
     <div className="space-y-6">
+      <PrototypeBanner
+        feature="Command Center summary cards, trend chart, alerts panel and sensor-health tiles"
+        missing="The ML summary card already uses the live backend stations endpoint. The remaining dashboard cards still draw on frontend demonstration data and must be connected to the live station, reading and alert endpoints before being treated as operational."
+      />
+
       {/* Operations Header Banner */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between rounded-3xl bg-slate-900 px-6 py-6 text-white shadow-md border border-slate-800">
         <div>

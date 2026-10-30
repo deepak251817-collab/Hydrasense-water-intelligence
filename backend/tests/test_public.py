@@ -18,3 +18,28 @@ def test_public_station_not_found_returns_404(client):
     response = client.get("/api/public/stations/NONEXISTENT-CODE")
     assert response.status_code == 404
     assert "not found" in response.json()["detail"]
+
+
+def test_public_station_listing_is_read_only_and_public_safe(client, seeded_water_data):
+    response = client.get("/api/public/stations")
+    assert response.status_code == 200
+    rows = response.json()
+    assert len(rows) == 1
+    station = rows[0]
+    assert station["station_code"] == "TEST-STA-01"
+    assert station["water_source"]["source_code"] == "TEST-SOURCE"
+    # Public-safe: no diagnostics, credentials or private identifiers.
+    assert "diagnostics" not in station
+    assert "device_id" not in station
+    assert "owner_id" not in station
+
+
+def test_public_station_listing_excludes_inactive(client, seeded_water_data, db_session):
+    from app.models.water import MonitoringStation
+
+    station = db_session.query(MonitoringStation).filter_by(
+        station_code="TEST-STA-01"
+    ).one()
+    station.is_active = False
+    db_session.commit()
+    assert client.get("/api/public/stations").json() == []

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { mockWaterSources } from "../../data/mockData";
 import PublicSourceCard from "../../components/public/PublicSourceCard";
+import DemoDataNotice from "../../components/public/DemoDataNotice";
 import { Search, Filter, Droplet, Info } from "lucide-react";
 
 export default function NearbySources() {
@@ -17,6 +18,11 @@ export default function NearbySources() {
 
   return (
     <div className="mx-auto max-w-7xl py-8 px-4 sm:px-6 lg:px-8 space-y-8">
+      <DemoDataNotice>
+        Real stations and their public suitability results are available on the
+        station pages (scan a station QR code) and through the water check flow.
+      </DemoDataNotice>
+
       {/* Header */}
       <div>
         <div className="inline-flex items-center gap-2 rounded-full bg-cyan-100 px-3 py-1 text-xs font-bold text-cyan-800">
