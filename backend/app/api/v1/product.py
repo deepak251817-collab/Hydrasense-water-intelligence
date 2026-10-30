@@ -59,6 +59,8 @@ def activate_my_product(
         "id": device.id,
         "product_code": device.product_code,
         "device_id": device.device_id,
+        "device_number": device.device_number,
+        "station_code": device.station_code,
         "device_type": device.device_type,
         "device_name": DEVICE_NAME,
         "status": device.status,

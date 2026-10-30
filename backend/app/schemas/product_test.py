@@ -221,6 +221,8 @@ class ProductDeviceSummary(BaseModel):
     id: int
     product_code: str
     device_id: str
+    device_number: Optional[str] = None
+    station_code: Optional[str] = None
     device_type: str
     device_name: str
     status: str

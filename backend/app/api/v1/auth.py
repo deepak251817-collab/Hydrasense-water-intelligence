@@ -7,7 +7,12 @@ from app.core.rate_limit import rate_limit
 from app.core.security import get_password_hash, verify_password, create_access_token
 from app.models.user import User, UserRole
 from app.models.device import ProductDevice
-from app.schemas.auth import UserRegisterRequest, UserLoginRequest, TokenResponse
+from app.schemas.auth import (
+    DeviceNumberLoginRequest,
+    UserRegisterRequest,
+    UserLoginRequest,
+    TokenResponse,
+)
 from app.schemas.user import UserResponse
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -19,6 +24,12 @@ login_rate_limit = rate_limit(
 )
 register_rate_limit = rate_limit(
     "auth:register", "RATE_LIMIT_REGISTER_MAX", "RATE_LIMIT_REGISTER_WINDOW_SECONDS"
+)
+# Device-number login shares the login throttle settings so a stolen or
+# guessed printed number cannot be brute-forced either (grep-safe separate
+# bucket key; same configurable limits as "auth:login").
+device_login_rate_limit = rate_limit(
+    "auth:device-login", "RATE_LIMIT_LOGIN_MAX", "RATE_LIMIT_LOGIN_WINDOW_SECONDS"
 )
 
 
@@ -124,4 +135,62 @@ def login(request: UserLoginRequest, db: Session = Depends(get_db)):
         token_type="bearer",
         role=user.role,
         user=UserResponse.model_validate(user)
+    )
+
+
+@router.post(
+    "/device-login",
+    response_model=TokenResponse,
+    dependencies=[Depends(device_login_rate_limit)],
+)
+def device_login(request: DeviceNumberLoginRequest, db: Session = Depends(get_db)):
+    """Personal-user login with the unique number printed on the device.
+
+    The device number identifies the *device*; the token is issued to the
+    account the device is bound to. An unregistered or unbound number never
+    creates an account or reveals whether a different number exists: the
+    response is a generic 400/404 without device details. Rate limiting applies
+    per client, shared with the e-mail login budget.
+    """
+
+    number = request.device_number.strip().upper()
+    if not number:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Device number is required",
+        )
+
+    device = (
+        db.query(ProductDevice)
+        .filter(func.upper(ProductDevice.device_number) == number)
+        .first()
+    )
+
+    # Same generic message for unknown numbers and unbound devices so the
+    # endpoint cannot be used to enumerate printed numbers.
+    if device is None or device.owner_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Invalid device number or device not yet linked to an account. "
+            "Create an account and activate this device number first.",
+        )
+
+    user = device.owner
+    if user is None or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Device account is inactive",
+        )
+
+    token = create_access_token(
+        subject=user.id,
+        role=user.role.value,
+        email=user.email,
+    )
+
+    return TokenResponse(
+        access_token=token,
+        token_type="bearer",
+        role=user.role,
+        user=UserResponse.model_validate(user),
     )

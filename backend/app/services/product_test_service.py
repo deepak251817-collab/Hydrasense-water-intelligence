@@ -463,29 +463,35 @@ def get_user_test(db: Session, user_id: int, test_id: int) -> ProductWaterTest:
     return test
 
 
-def activate_product(db: Session, user_id: int, product_code: str) -> ProductDevice:
-    """Bind a product code to the authenticated user atomically.
+def activate_product(db: Session, user_id: int, identifier: str) -> ProductDevice:
+    """Bind a product code OR printable device number to the authenticated user.
 
     ``SELECT ... FOR UPDATE`` (where the database supports it) serialises two
     concurrent claims of the same code. PostgreSQL is the production database;
     SQLite ignores the row lock, which is acceptable for local tests.
+    One HydraSense device is bound to exactly one account - an attempt to claim
+    a second device for an account that already owns one is rejected.
     """
 
-    code = product_code.strip().upper()
-    query = db.query(ProductDevice).filter(func.upper(ProductDevice.product_code) == code)
+    ident = identifier.strip().upper()
+    query = db.query(ProductDevice).filter(
+        (func.upper(ProductDevice.product_code) == ident)
+        | (func.upper(ProductDevice.device_number) == ident)
+    )
     try:
-        device = query.with_for_update().first()
+        device = query.with_for_update().all()
     except Exception:  # pragma: no cover - dialect without row locking
-        device = query.first()
-
+        device = query.all()
     if not device:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={
                 "code": "invalid_product_code",
-                "message": "Invalid product code: no HydraSense product has this code.",
+                "message": "Invalid product code or device number: no HydraSense product matches this identifier.",
             },
         )
+    # The columns are unique, so at most one row can match; take it explicitly.
+    device = device[0]
 
     if device.owner_id is not None:
         if device.owner_id == user_id:
@@ -495,6 +501,23 @@ def activate_product(db: Session, user_id: int, product_code: str) -> ProductDev
             detail={
                 "code": "product_already_claimed",
                 "message": "This product code is already linked to another account.",
+            },
+        )
+
+    already_owned = (
+        db.query(ProductDevice)
+        .filter(ProductDevice.owner_id == user_id)
+        .first()
+    )
+    if already_owned is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "account_device_limit",
+                "message": (
+                    "One HydraSense device is bound to one account "
+                    f"(this account already holds {already_owned.device_number or already_owned.product_code})."
+                ),
             },
         )
 

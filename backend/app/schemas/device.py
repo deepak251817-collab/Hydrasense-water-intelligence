@@ -16,6 +16,8 @@ class ProductDeviceCreate(ProductDeviceBase):
 class ProductDeviceResponse(ProductDeviceBase):
     id: int
     status: str
+    device_number: Optional[str] = None
+    station_code: Optional[str] = None
     owner_id: Optional[int] = None
     activated_at: Optional[datetime] = None
     created_at: datetime

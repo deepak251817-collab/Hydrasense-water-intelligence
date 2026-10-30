@@ -11,6 +11,41 @@ from app.models.device import ProductDevice
 from app.models.water import WaterSource, MonitoringStation
 
 
+def seed_first_personal_device(db, quiet: bool = False):
+    """Seed the FIRST personal device (printed number -> firmware/station).
+
+    Idempotent: a row with the same printed number, firmware device id or
+    product code short-circuits the insert.
+    """
+
+    first_device_number = "HSD-0001-K7M2Q9"
+    existing_first_device = (
+        db.query(ProductDevice)
+        .filter(
+            (ProductDevice.device_number == first_device_number)
+            | (ProductDevice.device_id == "ESP32-HS-001")
+            | (ProductDevice.product_code == "HS-KIT-000125")
+        )
+        .first()
+    )
+    if not existing_first_device:
+        first_device = ProductDevice(
+            product_code="HS-KIT-000125",
+            device_id="ESP32-HS-001",
+            device_number=first_device_number,
+            station_code="ARK-001",
+            device_type="PERSONAL_WATER_TESTER",
+            status="PENDING_ACTIVATION",
+            owner_id=None,
+        )
+        db.add(first_device)
+        db.commit()
+        if not quiet:
+            print(f"  [+] Created first personal device: {first_device_number} (ESP32-HS-001 @ ARK-001)")
+    elif not quiet:
+        print(f"  [*] First personal device already exists: {first_device_number}")
+
+
 def seed_demo_data():
     db = SessionLocal()
     try:
@@ -32,13 +67,14 @@ def seed_demo_data():
         else:
             print(f"  [*] Authority User already exists: {authority_email}")
 
-        # 2. Seed Product Device
+        # 2. Seed Product Devices
         product_code = "HS-KIT-000124"
         existing_device = db.query(ProductDevice).filter(ProductDevice.product_code == product_code).first()
         if not existing_device:
             device = ProductDevice(
                 product_code=product_code,
                 device_id="ESP32-PERSONAL-001",
+                device_number="HSD-0002-T8N5D9",
                 device_type="PERSONAL_WATER_TESTER",
                 status="PENDING_ACTIVATION",
                 owner_id=None,
@@ -47,6 +83,9 @@ def seed_demo_data():
             print(f"  [+] Created Unclaimed Product Device: {product_code} (ESP32-PERSONAL-001)")
         else:
             print(f"  [*] Product Device already exists: {product_code}")
+
+        # 2b. Seed the FIRST personal device (printed number on the enclosure).
+        seed_first_personal_device(db)
 
         # 3. Seed Water Sources — the three demonstration rivers only.
         # Locations and readings for these rivers are DEMONSTRATION data.
