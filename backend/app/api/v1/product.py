@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_product_user
 from app.core.database import get_db
+from app.core.rate_limit import rate_limit
 from app.models.device import ProductDevice
 from app.models.user import User
 from app.models.water_test import ProductWaterTest
@@ -24,6 +25,14 @@ from app.services import product_test_service
 from app.services.product_test_service import DEVICE_NAME
 
 router = APIRouter(prefix="/product", tags=["Product User"])
+
+# Device activation is a state change on a printed code: throttle it per client
+# so activation codes cannot be enumerated at API speed.
+activation_rate_limit = rate_limit(
+    "product:activate",
+    "RATE_LIMIT_ACTIVATE_MAX",
+    "RATE_LIMIT_ACTIVATE_WINDOW_SECONDS",
+)
 
 
 @router.get("/me", response_model=UserResponse)
@@ -44,7 +53,11 @@ def get_my_devices(
     )
 
 
-@router.post("/activate", response_model=ProductDeviceSummary)
+@router.post(
+    "/activate",
+    response_model=ProductDeviceSummary,
+    dependencies=[Depends(activation_rate_limit)],
+)
 def activate_my_product(
     payload: ActivateProductRequest,
     current_user: User = Depends(get_current_product_user),

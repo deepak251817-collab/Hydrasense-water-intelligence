@@ -41,6 +41,15 @@ class Settings(BaseSettings):
     MQTT_BROKER_HOST: str = "localhost"
     MQTT_BROKER_PORT: int = 1883
     MQTT_TOPIC_PREFIX: str = "hydrasense/stations"
+    # Broker authentication. Anonymous access is for local development only;
+    # production startup refuses to run without a username and password.
+    MQTT_USERNAME: str = ""
+    MQTT_PASSWORD: str = ""
+    MQTT_USE_TLS: bool = False
+    MQTT_CA_CERT_PATH: str = ""
+    MQTT_CLIENT_ID: str = "hydrasense-backend"
+    # Explicit opt-in required to accept anonymous brokers in production.
+    MQTT_ALLOW_ANONYMOUS: bool = False
 
     # --- CORS -------------------------------------------------------------
     # Comma-separated explicit origins. Empty means: development/preview
@@ -64,6 +73,8 @@ class Settings(BaseSettings):
     RATE_LIMIT_LOGIN_WINDOW_SECONDS: int = 300
     RATE_LIMIT_REGISTER_MAX: int = 10
     RATE_LIMIT_REGISTER_WINDOW_SECONDS: int = 3600
+    RATE_LIMIT_ACTIVATE_MAX: int = 10
+    RATE_LIMIT_ACTIVATE_WINDOW_SECONDS: int = 3600
 
     # --- Notifications -------------------------------------------------------
     # Email is the only implemented channel; when SMTP_HOST is empty the
@@ -133,6 +144,17 @@ class Settings(BaseSettings):
                 fatal.append(message)
             else:
                 logger.warning("%s (APP_ENV=%s keeps running)", message, self.APP_ENV)
+
+        # MQTT: an anonymous broker lets anyone publish station telemetry, so
+        # production requires explicit broker credentials unless the operator
+        # deliberately opts in to anonymous access.
+        if self.is_production and not self.MQTT_ALLOW_ANONYMOUS:
+            if not self.MQTT_USERNAME.strip() or not self.MQTT_PASSWORD:
+                fatal.append(
+                    "MQTT_USERNAME and MQTT_PASSWORD are required in production "
+                    "(anonymous brokers are refused; set MQTT_ALLOW_ANONYMOUS=true "
+                    "only for an isolated development deployment)."
+                )
 
         if fatal:
             raise RuntimeError(

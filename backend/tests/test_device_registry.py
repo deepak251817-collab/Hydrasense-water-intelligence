@@ -186,6 +186,35 @@ def test_device_login_rate_limited(client, db_session, monkeypatch):
     assert "Retry-After" in response.headers
 
 
+def test_device_activation_rate_limited(client, db_session, monkeypatch):
+    import app.core.config as config
+
+    owner = _register_user(client, email="activate-limit@example.com")
+    token = _login_token(client, owner["email"])
+    headers = {"Authorization": f"Bearer {token}"}
+
+    monkeypatch.setattr(config.settings, "RATE_LIMIT_ENABLED", True, raising=False)
+    monkeypatch.setattr(config.settings, "RATE_LIMIT_ACTIVATE_MAX", 2, raising=False)
+    monkeypatch.setattr(config.settings, "RATE_LIMIT_ACTIVATE_WINDOW_SECONDS", 60, raising=False)
+    monkeypatch.setattr(config.settings, "RATE_LIMIT_TRUST_PROXY_HEADERS", False, raising=False)
+
+    for _ in range(2):
+        response = client.post(
+            "/api/product/activate",
+            headers=headers,
+            json={"product_code": "HS-KIT-DOES-NOT-EXIST"},
+        )
+        assert response.status_code == 400, response.text
+
+    blocked = client.post(
+        "/api/product/activate",
+        headers=headers,
+        json={"product_code": "HS-KIT-DOES-NOT-EXIST"},
+    )
+    assert blocked.status_code == 429
+    assert "Retry-After" in blocked.headers
+
+
 def test_seed_demo_is_idempotent_for_first_device(db_session, monkeypatch):
     """Run the seeding logic for the first device exactly as seed_demo does."""
     from scripts.seed_demo import seed_first_personal_device

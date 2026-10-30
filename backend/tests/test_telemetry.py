@@ -778,7 +778,47 @@ def test_ntu_unit_does_not_get_index_bounds(db_session, seeded_stations):
     assert reading.turbidity_status is None
 
 
-# 25. Malformed unit/status values are rejected without crashing the subscriber.
+# 25. Ingestion upper bounds reject physically implausible values (stuck ADC,
+#     shorted probe or a malicious publisher) instead of storing them.
+def test_ingestion_upper_bounds_are_enforced():
+    base = {
+        "station_code": "ARK-001",
+        "device_id": "ESP32-HS-001",
+        "timestamp": "2026-10-24T09:05:00Z",
+        "pH": 7.0,
+        "tds": 50000.0,
+        "temperature": 25.0,
+        "turbidity": 4000.0,
+        "turbidity_unit": "ntu",
+        "source": "esp32",
+    }
+    assert validate_telemetry_payload(base) == (True, "Valid")
+
+    too_much_tds = dict(base, tds=50000.1)
+    ok, reason = validate_telemetry_payload(too_much_tds)
+    assert ok is False and "tds out of valid physical range" in reason
+
+    too_much_turbidity = dict(base, turbidity=4000.1)
+    ok, reason = validate_telemetry_payload(too_much_turbidity)
+    assert ok is False and "turbidity out of valid physical range" in reason
+
+
+def test_ingestion_bounds_reject_non_finite_values():
+    base = {
+        "station_code": "ARK-001",
+        "device_id": "ESP32-HS-001",
+        "timestamp": "2026-10-24T09:06:00Z",
+        "pH": 7.0,
+        "tds": float("nan"),
+        "temperature": 25.0,
+        "turbidity": 10.0,
+        "source": "esp32",
+    }
+    ok, _reason = validate_telemetry_payload(base)
+    assert ok is False
+
+
+# 26. Malformed unit/status values are rejected without crashing the subscriber.
 @pytest.mark.parametrize("bad", [
     {"turbidity_unit": 42},
     {"turbidity_unit": "relative index with spaces"},

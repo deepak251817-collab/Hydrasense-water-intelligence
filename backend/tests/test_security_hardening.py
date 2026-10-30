@@ -184,7 +184,32 @@ def test_short_secret_fails_in_production_but_not_development():
 
 
 def test_valid_secret_passes_in_every_environment():
-    Settings(JWT_SECRET_KEY=VALID_SECRET, APP_ENV="production").validate_security()
+    Settings(
+        JWT_SECRET_KEY=VALID_SECRET,
+        APP_ENV="production",
+        MQTT_USERNAME="hydrasense",
+        MQTT_PASSWORD="broker-password",
+    ).validate_security()
+    Settings(JWT_SECRET_KEY=VALID_SECRET, APP_ENV="development").validate_security()
+
+
+def test_production_requires_mqtt_credentials():
+    with pytest.raises(RuntimeError, match="MQTT_USERNAME and MQTT_PASSWORD"):
+        Settings(JWT_SECRET_KEY=VALID_SECRET, APP_ENV="production").validate_security()
+
+
+def test_production_rejects_anonymous_mqtt_opt_in():
+    cfg = Settings(
+        JWT_SECRET_KEY=VALID_SECRET,
+        APP_ENV="production",
+        MQTT_ALLOW_ANONYMOUS=True,
+    )
+    # The explicit opt-in is what disables the credential requirement; the
+    # deployment checker (verify_production_config.py) still fails it.
+    cfg.validate_security()
+
+
+def test_development_allows_anonymous_mqtt():
     Settings(JWT_SECRET_KEY=VALID_SECRET, APP_ENV="development").validate_security()
 
 

@@ -15,6 +15,7 @@ real login round-trip, real rate-limit observation).
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -30,8 +31,56 @@ from app.core.config import (  # noqa: E402
 PASS, FAIL, REVIEW = "PASS", "FAIL", "REVIEW"
 
 
+REPOSITORY_ROOT = Path(__file__).resolve().parent.parent.parent
+
+# Real secret files that must never be tracked by git. Templates are allowed.
+SENSITIVE_TRACKED_PATHS = {
+    "backend/.env",
+    "frontend/.env",
+    "firmware/hydrasense_esp32/config.h",
+}
+
+
 def _is_production(cfg: Settings) -> bool:
     return cfg.APP_ENV.strip().lower() in {"production", "prod", "staging", "live"}
+
+
+def _tracked_secret_files() -> tuple[list[str] | None, str]:
+    """List tracked real-secret files; None when git cannot be inspected."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(REPOSITORY_ROOT), "ls-files"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as err:  # pragma: no cover - env specific
+        return None, f"git unavailable ({err.__class__.__name__})"
+    if result.returncode != 0:
+        return None, "git ls-files failed"
+    flagged = [
+        path
+        for path in result.stdout.splitlines()
+        if path in SENSITIVE_TRACKED_PATHS
+        or Path(path).name in {".env", ".env.local", ".env.production"}
+    ]
+    return flagged, f"{len(result.stdout.splitlines())} tracked files scanned"
+
+
+def _ingestion_bounds() -> dict[str, float]:
+    """Read the real ingestion bounds from the telemetry validator."""
+    from app.services.mqtt_service import (
+        TDS_MAX_PPM,
+        TURBIDITY_INDEX_MAX,
+        TURBIDITY_MAX_NTU,
+    )
+
+    return {
+        "tds_ppm": TDS_MAX_PPM,
+        "turbidity_ntu": TURBIDITY_MAX_NTU,
+        "turbidity_index": TURBIDITY_INDEX_MAX,
+    }
 
 
 def run_checks(cfg: Settings) -> list[tuple[str, str, str]]:
@@ -131,6 +180,90 @@ def run_checks(cfg: Settings) -> list[tuple[str, str, str]]:
         "still uses postgres:postgres — change it for production"
         if defaultish else "custom connection string (value never printed)",
     ))
+
+    # 8. MQTT broker authentication: anonymous publishing is never acceptable.
+    if cfg.MQTT_ALLOW_ANONYMOUS:
+        results.append((
+            "MQTT authentication configured",
+            FAIL,
+            "MQTT_ALLOW_ANONYMOUS=true: anyone who can reach the broker could publish telemetry",
+        ))
+    elif cfg.MQTT_USERNAME.strip() and cfg.MQTT_PASSWORD:
+        results.append((
+            "MQTT authentication configured",
+            PASS,
+            "broker username/password supplied from the environment (values never printed)",
+        ))
+    else:
+        results.append((
+            "MQTT authentication configured",
+            FAIL,
+            "MQTT_USERNAME/MQTT_PASSWORD are missing; the subscriber would connect anonymously",
+        ))
+
+    # 9. Broker TLS: mandatory as soon as the broker leaves the host.
+    broker_is_local = cfg.MQTT_BROKER_HOST.strip().lower() in {
+        "localhost", "127.0.0.1", "::1",
+    }
+    if cfg.MQTT_USE_TLS:
+        results.append((
+            "MQTT transport encrypted",
+            PASS,
+            "MQTT_USE_TLS=true"
+            + (" with a configured CA bundle" if cfg.MQTT_CA_CERT_PATH else " (system trust store)"),
+        ))
+    elif broker_is_local:
+        results.append((
+            "MQTT transport encrypted",
+            REVIEW,
+            "broker is loopback (TLS optional inside one host); set MQTT_USE_TLS before it leaves the host",
+        ))
+    else:
+        results.append((
+            "MQTT transport encrypted",
+            FAIL,
+            f"remote broker {cfg.MQTT_BROKER_HOST!r} configured without TLS",
+        ))
+
+    # 10. QR / public-page base URL must be the real HTTPS origin.
+    base = cfg.PUBLIC_BASE_URL.strip()
+    if base.startswith("https://"):
+        results.append(("PUBLIC_BASE_URL uses HTTPS", PASS, base + " (printed QR links)"))
+    elif base.startswith("http://localhost") or base.startswith("http://127.0.0.1"):
+        results.append((
+            "PUBLIC_BASE_URL uses HTTPS",
+            REVIEW,
+            "still points at the local dev server; QR codes would be unscannable off this machine",
+        ))
+    else:
+        results.append((
+            "PUBLIC_BASE_URL uses HTTPS",
+            FAIL,
+            "PUBLIC_BASE_URL must be the real public HTTPS origin before printing QR codes",
+        ))
+
+    # 11. Telemetry ingestion bounds are finite and documented.
+    bounds = _ingestion_bounds()
+    bounds_ok = all(
+        isinstance(value, (int, float)) and 0 < value < float("inf")
+        for value in bounds.values()
+    )
+    results.append((
+        "Telemetry ingestion bounds",
+        PASS if bounds_ok else FAIL,
+        ", ".join(f"{name}<={value:g}" for name, value in bounds.items()),
+    ))
+
+    # 12. No real secret file is tracked by git (templates are fine).
+    tracked, detail = _tracked_secret_files()
+    if tracked is None:
+        results.append(("No secrets committed", REVIEW, detail))
+    else:
+        results.append((
+            "No secrets committed",
+            FAIL if tracked else PASS,
+            f"tracked secret files: {tracked}" if tracked else detail,
+        ))
 
     return results
 

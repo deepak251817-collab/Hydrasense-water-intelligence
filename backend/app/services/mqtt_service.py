@@ -38,6 +38,16 @@ TURBIDITY_UNIT_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{1,32}$")
 TURBIDITY_STATUS_BANDS = ("CLEARER", "MODERATE", "CLOUDIER")
 
 
+# ---- Ingestion upper bounds -------------------------------------------------
+# Reject physically implausible values so a stuck ADC, a shorted probe or a
+# malicious publisher cannot write absurd numbers into the database. These are
+# hardware sanity bounds, NOT water-quality standards: 50000 ppm is far above
+# any natural freshwater reading and 4000 NTU far above any plausible sample.
+TDS_MAX_PPM = 50000.0
+TURBIDITY_MAX_NTU = 4000.0
+TURBIDITY_INDEX_MAX = 100.0
+
+
 def parse_turbidity_meta(data: Dict[str, Any]) -> Tuple[Optional[str], Optional[str], Optional[str]]:
     """Extract and validate the turbidity unit/status for a payload.
 
@@ -141,8 +151,8 @@ def validate_telemetry_payload(data: Dict[str, Any]) -> Tuple[bool, str]:
     # additionally bounded to [0, 100]; NTU-style values keep the >= 0 range.
     sensor_ranges: Dict[str, Tuple[float, float]] = {
         "pH": (0.0, 14.0),
-        "turbidity": (0.0, float("inf")),
-        "tds": (0.0, float("inf")),
+        "turbidity": (0.0, TURBIDITY_MAX_NTU),
+        "tds": (0.0, TDS_MAX_PPM),
         "temperature": (-20.0, 70.0),
     }
     for field, (lo, hi) in sensor_ranges.items():
@@ -159,7 +169,7 @@ def validate_telemetry_payload(data: Dict[str, Any]) -> Tuple[bool, str]:
             return False, f"Non-numeric value provided for {field}"
         if not (lo <= numeric <= hi):
             return False, f"{field} out of valid physical range [{lo}, {hi}]: {numeric}"
-        if field == "turbidity" and turbidity_unit == TURBIDITY_UNIT_RELATIVE and numeric > 100.0:
+        if field == "turbidity" and turbidity_unit == TURBIDITY_UNIT_RELATIVE and numeric > TURBIDITY_INDEX_MAX:
             return False, f"turbidity relative index out of range [0, 100]: {numeric}"
 
     # Optional provenance tag: "esp32" for physical hardware, "simulator" for
@@ -393,9 +403,29 @@ class MQTTSubscriberService:
         self.is_connected = False
 
         if hasattr(mqtt, "CallbackAPIVersion"):
-            self.client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
+            self.client = mqtt.Client(
+                callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
+                client_id=settings.MQTT_CLIENT_ID,
+            )
         else:
-            self.client = mqtt.Client()
+            self.client = mqtt.Client(client_id=settings.MQTT_CLIENT_ID)
+
+        # Broker authentication. Credentials come only from the environment;
+        # nothing is logged. TLS is enabled explicitly when the broker is not
+        # trusted as local (see verify_production_config.py).
+        if settings.MQTT_USERNAME.strip():
+            self.client.username_pw_set(
+                settings.MQTT_USERNAME.strip(),
+                settings.MQTT_PASSWORD or None,
+            )
+        if settings.MQTT_USE_TLS:
+            if settings.MQTT_CA_CERT_PATH:
+                self.client.tls_set(ca_certs=settings.MQTT_CA_CERT_PATH)
+            else:
+                # System trust store; the broker certificate must be valid
+                # for MQTT_BROKER_HOST.
+                self.client.tls_set()
+        self.client.reconnect_delay_set(min_delay=1, max_delay=30)
 
         self._setup_callbacks()
 
@@ -428,6 +458,12 @@ class MQTTSubscriberService:
 
     def start(self):
         logger.info(f"Starting MQTT subscriber service towards {self.host}:{self.port}...")
+        if not settings.MQTT_USERNAME.strip():
+            logger.warning(
+                "MQTT_USERNAME is not configured; only an anonymous, local "
+                "development broker is acceptable. Production startup refuses "
+                "this configuration."
+            )
         try:
             self.client.connect_async(self.host, self.port, keepalive=60)
             self.client.loop_start()

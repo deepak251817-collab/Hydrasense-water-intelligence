@@ -151,15 +151,41 @@ Backend environment variables (`backend/.env`):
 | `RATE_LIMIT_TRUST_PROXY_HEADERS` | `false` | Set `true` only behind a reverse proxy you control (uses `X-Forwarded-For`) |
 | `RATE_LIMIT_LOGIN_MAX` / `RATE_LIMIT_LOGIN_WINDOW_SECONDS` | `10` / `300` | Login attempts per client per fixed window |
 | `RATE_LIMIT_REGISTER_MAX` / `RATE_LIMIT_REGISTER_WINDOW_SECONDS` | `10` / `3600` | Registration attempts per client per fixed window |
+| `RATE_LIMIT_ACTIVATE_MAX` / `RATE_LIMIT_ACTIVATE_WINDOW_SECONDS` | `10` / `3600` | Device activation attempts per client per fixed window (stops printed-code enumeration) |
 | `MQTT_BROKER_HOST` / `MQTT_BROKER_PORT` | `localhost` / `1883` | Broker address |
 | `MQTT_TOPIC_PREFIX` | `hydrasense/stations` | Telemetry topic prefix |
+| `MQTT_USERNAME` / `MQTT_PASSWORD` | empty | Broker credentials. **Required in production** (startup refuses anonymous unless `MQTT_ALLOW_ANONYMOUS=true`). Never logged; keep them only in `.env`/the secret manager. |
+| `MQTT_USE_TLS` / `MQTT_CA_CERT_PATH` | `false` / empty | Enable broker TLS; empty CA path uses the system trust store. TLS is required as soon as the broker is not loopback (the deployment checker fails otherwise). |
+| `MQTT_ALLOW_ANONYMOUS` | `false` | Explicit, development-only opt-in for an anonymous local broker. The production checker always fails it. |
+| `PUBLIC_BASE_URL` | `http://localhost:5173` | Public web origin encoded into printed station QR codes. Must be the real HTTPS origin before QR codes are used. |
 | `DEMO_STRICT_TDS_RULE` | `true` | Enables the project-specific <200 mg/L drinking-water TDS target. Set `false` to disable it; it never affects domestic, irrigation, swimming or aquaculture. |
 
 ### 3. MQTT broker
 
 ```bash
-mosquitto          # default listener on localhost:1883
+mosquitto          # anonymous default listener on localhost:1883 (development only)
 ```
+
+For any shared or deployed broker, disable anonymous access and add ACLs so a device can only
+publish its own station topic while the backend can only subscribe:
+
+```conf
+allow_anonymous false
+password_file /etc/mosquitto/passwd
+acl_file      /etc/mosquitto/acl
+```
+
+```conf
+user hydrasense-backend
+topic read hydrasense/stations/+/telemetry
+
+user device-ark-001
+topic write hydrasense/stations/ARK-001/telemetry
+```
+
+Set `MQTT_USERNAME` / `MQTT_PASSWORD` in `backend/.env` to match, enable `MQTT_USE_TLS` when the
+broker leaves the host, and use a distinct credential per ESP32 station. Full reference and the
+real-environment verification checklist: [docs/DEPLOYMENT_VERIFICATION.md](docs/DEPLOYMENT_VERIFICATION.md).
 
 ### 4. Sensor simulator (optional, for live telemetry)
 
@@ -604,11 +630,17 @@ python scripts/verify_production_config.py   # PASS/FAIL/REVIEW checklist, exit 
 ```
 
 It runs the application's own fail-fast checks (JWT secret present, strong and not a known
-placeholder; production-like `APP_ENV`; CORS allowlist populated) plus static settings checks
-(rate limits configured, proxy-header trust off, HS256, token lifetime, non-default database
-URL). Against a development `.env` it intentionally reports FAILs — that is correct: those
+placeholder; production-like `APP_ENV`; CORS allowlist populated; MQTT credentials present and
+anonymous access refused) plus static settings checks (rate limits configured, broker TLS for
+any non-loopback host, HTTPS `PUBLIC_BASE_URL`, finite ingestion bounds, proxy-header trust off,
+HS256, token lifetime, non-default database URL, and a `git ls-files` scan for tracked secret
+files). Against a development `.env` it intentionally reports FAILs — that is correct: those
 checks are meant to be run with the *production* environment variables. The same checks are
 covered by `backend/tests/test_production_config.py`.
+
+The canonical checklist, with the exact real-environment steps and their current status, is
+[docs/DEPLOYMENT_VERIFICATION.md](docs/DEPLOYMENT_VERIFICATION.md). Every item there is still
+unrun.
 
 > **Deployment security is UNVERIFIED.** The script is a local, static check. It cannot probe a
 > real deployment, so nothing below may be claimed as verified until this checklist has been
@@ -630,7 +662,10 @@ covered by `backend/tests/test_production_config.py`.
    `Retry-After` (and that no password/token ever appears in logs).
 7. TLS terminated at the proxy, `RATE_LIMIT_TRUST_PROXY_HEADERS=true` only behind a proxy you
    control, and no secrets in logs, error pages or the OpenAPI schema.
-8. Seeded demo credentials changed before any real users exist.
+8. MQTT: anonymous connections refused, per-station ACLs enforced, TLS certificate validated
+   when the broker is remote, and implausible payloads (TDS > 50 000 ppm, NTU > 4 000) rejected.
+9. Device activation observed returning 429 after `RATE_LIMIT_ACTIVATE_MAX` attempts.
+10. Seeded demo credentials changed before any real users exist.
 
 ### Database schema drift (intentional, verified — no drops)
 
@@ -660,7 +695,7 @@ This project deliberately constrains its claims:
 - **Low TDS is a project preference, not a safety verdict.** The <200 mg/L drinking-water flag is a demo rule. Low TDS alone does not make water unsafe, and high TDS alone does not identify which contaminants are present.
 - **Stability ≠ calibration.** A stable rolling window can still come from provisional sensors; live results with unverified calibration are reported as `INCONCLUSIVE`.
 - **Forecasting honesty.** The XGBoost deterioration target is a rule-based indicator on a single USGS station (~5 weeks synchronized); temporal performance drop from validation to test is documented, not tuned away.
-- **Security posture.** The code enforces an explicit CORS allowlist, requires an environment-supplied JWT secret, throttles login/registration with shared database counters, and blocks privilege escalation at registration — but **no production deployment has been verified**, so production security must still be confirmed on the real environment.
+- **Security posture.** The code enforces an explicit CORS allowlist, requires an environment-supplied JWT secret, throttles login/registration/device activation with shared database counters, requires MQTT broker credentials in production, rejects anonymous brokers, and blocks privilege escalation at registration — but **no production deployment has been verified**, so production security must still be confirmed on the real environment ([checklist](docs/DEPLOYMENT_VERIFICATION.md)).
 - **No fabricated results.** Missing ML artifacts, failed inference, or pre-ML readings all produce NULL ML fields, rendered in the UI as "Analysis unavailable".
 - **Turbidity is not always NTU.** ESP32 hardware reports a **provisional relative index 0–100** anchored to two sample-based sensor voltages (≈0.354 V clear, ≈0.273 V cloudy). It is a relative trend indicator, **not** a calibrated NTU measurement and **not** a safety verdict; converting it to NTU requires the two-point calibration in [firmware/README.md](firmware/README.md) §10.
 - **Relative turbidity is excluded from ML.** The models were trained on NTU-style turbidity, so relative-index readings are stored and displayed but deliberately keep NULL ML fields — reported as “ML prediction unavailable for Turbidity Index readings.” rather than a silent gap. Data requirements for a future index-trained model are documented in [docs/TURBIDITY_INDEX_ML.md](docs/TURBIDITY_INDEX_ML.md).

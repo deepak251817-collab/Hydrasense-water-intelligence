@@ -17,6 +17,10 @@ GOOD = dict(
     CORS_ALLOW_ORIGINS="https://app.example.com",
     RATE_LIMIT_ENABLED=True,
     DATABASE_URL="postgresql+psycopg2://hydrasense:STRONG@db.example.com/hydrasense",
+    MQTT_USERNAME="hydrasense",
+    MQTT_PASSWORD="broker-password",
+    MQTT_USE_TLS=True,
+    PUBLIC_BASE_URL="https://hydrasense.example.com",
 )
 
 
@@ -80,3 +84,46 @@ def test_proxy_trust_and_long_token_lifetime_need_review():
     result = statuses(cfg)
     assert result["Proxy header trust"] == REVIEW
     assert result["Token lifetime"] == REVIEW
+
+
+def test_missing_mqtt_credentials_fail():
+    cfg = Settings(**{**GOOD, "MQTT_USERNAME": "", "MQTT_PASSWORD": ""})
+    assert statuses(cfg)["MQTT authentication configured"] == FAIL
+
+
+def test_anonymous_mqtt_fails_even_with_credentials():
+    cfg = Settings(**{**GOOD, "MQTT_ALLOW_ANONYMOUS": True})
+    assert statuses(cfg)["MQTT authentication configured"] == FAIL
+
+
+def test_remote_broker_without_tls_fails():
+    cfg = Settings(**{**GOOD, "MQTT_USE_TLS": False, "MQTT_BROKER_HOST": "mqtt.example.com"})
+    assert statuses(cfg)["MQTT transport encrypted"] == FAIL
+
+
+def test_loopback_broker_without_tls_needs_review():
+    cfg = Settings(**{**GOOD, "MQTT_USE_TLS": False, "MQTT_BROKER_HOST": "localhost"})
+    assert statuses(cfg)["MQTT transport encrypted"] == REVIEW
+
+
+def test_public_base_url_must_be_https():
+    cfg = Settings(**{**GOOD, "PUBLIC_BASE_URL": "http://example.com"})
+    assert statuses(cfg)["PUBLIC_BASE_URL uses HTTPS"] == FAIL
+    dev = Settings(**{**GOOD, "PUBLIC_BASE_URL": "http://localhost:5173"})
+    assert statuses(dev)["PUBLIC_BASE_URL uses HTTPS"] == REVIEW
+
+
+def test_ingestion_bounds_are_finite():
+    detail = dict(
+        (check, status) for check, status, _detail in run_checks(Settings(**GOOD))
+    )["Telemetry ingestion bounds"]
+    assert detail == PASS
+
+
+def test_repository_has_no_tracked_secret_files():
+    from scripts.verify_production_config import _tracked_secret_files
+
+    tracked, _detail = _tracked_secret_files()
+    if tracked is None:
+        pytest.skip("git is unavailable in this environment")
+    assert tracked == []
