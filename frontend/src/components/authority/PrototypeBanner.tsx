@@ -22,8 +22,8 @@ export default function PrototypeBanner({ feature, missing }: PrototypeBannerPro
         </p>
         <p className="mt-1 text-xs leading-relaxed text-slate-500">
           {feature} are clearly-labelled demonstration records loaded from the frontend
-          bundle. There is no backend endpoint, database model or persistence behind this
-          page, and nothing shown here is a genuine operational record. {missing}
+          bundle, not live database records, and nothing shown here is a genuine
+          operational record. {missing}
         </p>
       </div>
     </div>

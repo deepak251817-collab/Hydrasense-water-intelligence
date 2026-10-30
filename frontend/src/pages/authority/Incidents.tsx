@@ -33,9 +33,11 @@ export default function Incidents() {
     <div className="space-y-6">
       <PrototypeBanner
         feature="Incidents"
-        missing="Needed to make this real: an incidents database model, authoring and
-        assignment endpoints with AUTHORITY-only writes, status transitions with audit
-        timestamps, and links from each alert to its triggering reading."
+        missing="The backend incident workflow is implemented and tested (AUTHORITY-only
+        create/list/detail endpoints, forward-only status transitions with an audit trail,
+        lab contacts, verbatim lab results and a generated PDF report). This page still
+        needs to be wired to those endpoints, with loading, empty, error and unauthorized
+        states, before it can replace the demonstration records."
       />
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">

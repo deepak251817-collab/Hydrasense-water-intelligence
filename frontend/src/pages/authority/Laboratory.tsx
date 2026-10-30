@@ -7,10 +7,13 @@ export default function Laboratory() {
     <div className="space-y-6">
       <PrototypeBanner
         feature="Laboratory records"
-        missing="Needed to make this real: a lab-results model with sample
-        chain-of-custody, uploads of instrument output entered by authorised users, and an
-        explicit rule that laboratory values are never derived from the four hardware
-        sensors."
+        missing={
+          "The backend already stores laboratory results against incidents " +
+          "(entered verbatim by an authorised user, fixed source=laboratory provenance, " +
+          "never derived from the four hardware sensors) and includes them in the incident " +
+          "PDF. This page still needs a read view over those real lab results; the " +
+          "demonstration 'Certified' wording below is not a certification by HydraSense."
+        }
       />
       {/* Header */}
       <div>

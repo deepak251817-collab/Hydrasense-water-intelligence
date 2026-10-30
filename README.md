@@ -678,7 +678,9 @@ columns that the SQLAlchemy models intentionally no longer map to**. Verified on
 | Columns `product_devices.device_name`, `product_devices.expires_at` | Earlier device columns; the API now serves a constant `DEVICE_NAME` and stores activation/expiry elsewhere | The `ProductDevice` model has no such attributes, so nothing reads them; harmless and reversible only by a dedicated migration. |
 
 No migration drops or rewrites any of this: migration history is untouched and `alembic
-upgrade head` still lands on `a9b0c1d2e3f4`. If you ever want to reclaim the space, write an
+upgrade head` still lands on `b8c9d0e1f2a3` (chain: … `a9b0c1d2e3f4` overall-state →
+`f1e2d3c4b5a6` device-number registry → `a7b8c9d0e1f2` notifications → `b8c9d0e1f2a3`
+incidents/labs). If you ever want to reclaim the space, write an
 explicit, reviewed migration after confirming the rows are expendable — do not run
 `alembic revision --autogenerate` output that contains `drop_table`/`drop_column` blindly.
 
@@ -720,9 +722,10 @@ This project deliberately constrains its claims:
   `frontend/src/pages/authority/Alerts.tsx` now shows loading, empty, error and
   unauthorized/expired states instead of `mockAlerts`.
 - **Prototype authority pages are labelled.** Incidents, Inspections and Laboratory carry a
-  visible `PrototypeBanner` naming exactly what is missing (no backend endpoints, demonstration
-  records only, laboratory results are not sensor measurements), so no screen implies a real
-  incident/inspection/lab workflow.
+  visible `PrototypeBanner` that states the records are demonstration data. Incidents and
+  Laboratory now say precisely that the backend workflow exists (endpoints, audit trail, PDF)
+  while these pages are not wired to it yet; Inspections states it has no backend at all. No
+  screen implies that its demonstration records are genuine operational entries.
 - **Production configuration can be checked locally.** `backend/scripts/verify_production_config.py`
   plus `backend/tests/test_production_config.py` implement the static checklist above; deployment
   itself remains UNVERIFIED until the checklist runs against the real environment.
@@ -734,12 +737,46 @@ This project deliberately constrains its claims:
 - **Alert thresholds are transparent.** Every alert number comes from one versioned, sourced profile that separates `official_standard` (BIS-cited) from `project_configured` (illustrative, requires local validation), served by `GET /api/product/alerts/profile` and shown in the UI; turbidity-index alerts are never compared with NTU limits.
 - **ML availability is explicit per reading.** Relative-index readings report “ML prediction unavailable for Turbidity Index readings.” with the reason, and stale labels are never surfaced next to an “unavailable” status.
 - **Forecasting exists as a validated baseline capability** with readiness gates, time-aware holdout evaluation against persistence, and honest unavailable states (see *Baseline forecasting* above).
+- **Device-number login.** `POST /api/auth/device-login` resolves a printed device number
+  (`HSD-0001-K7M2Q9`) to its bound account with generic errors and its own rate-limit bucket
+  (migration `f1e2d3c4b5a6` seeds the registry); one device binds to one account.
+- **Notification service.** Alerts can now be delivered: `notifications` table + migration
+  `a7b8c9d0e1f2` with severity, dedup key, cooldown window, per-user category preferences and a
+  delivery log. With no SMTP configured the outcome is recorded as `skipped_unconfigured` —
+  never silently "sent", and never breaking ingestion or alerting.
+- **Incident + laboratory workflow (backend).** AUTHORITY-only endpoints under
+  `/api/authority/incidents` implement `raised → lab_notified → sample_collected →
+  result_received → resolved` with an audit event per step, lab contacts, verbatim lab results
+  (fixed `source=laboratory`, never derived from the four sensors) and a generated PDF report
+  (migration `b8c9d0e1f2a3`). The Incidents and Laboratory **pages** are still labelled
+  demonstrations until they are wired to these endpoints.
+- **Station QR generation (backend).** `GET /api/authority/stations/{code}/qr[.png|.svg|.pdf]`
+  encodes `PUBLIC_BASE_URL` per station; the authority QR page shows a live preview and
+  downloads from these endpoints.
+- **Anomaly model retrained and versioned.** The 9-row Isolation Forest was replaced with a
+  model trained on the cleaned real distributions; artifacts carry `model_manifest.json` and
+  `ml/reports/evaluation_report.md` recomputes metrics from the artifacts. External datasets are
+  audited by `ml/scripts/inspect_datasets.py` (`ml/reports/dataset_inspection.md`).
+- **Public WaterCheck uses the backend.** The public suitability page now renders
+  `GET /api/public/stations/{code}/suitability` instead of computing verdicts in the browser
+  from mock data; the sidebar's fabricated probe count was removed and every remaining
+  demonstration screen is explicitly labelled.
+- **MQTT and ingestion hardening.** Production startup refuses anonymous MQTT (credentials
+  required unless `MQTT_ALLOW_ANONYMOUS=true`), TLS is required for any non-loopback broker,
+  telemetry is bounded to TDS ≤ 50 000 ppm / turbidity ≤ 4 000 NTU / index ≤ 100 (non-finite
+  rejected), and `POST /product/activate` is throttled. See
+  [docs/DEPLOYMENT_VERIFICATION.md](docs/DEPLOYMENT_VERIFICATION.md).
 
 **Remaining limitations**
 
 - **No probabilistic or trained forecasting model.** Only the Ridge baseline is implemented; there are no confidence intervals (the band is the holdout MAE), no exogenous inputs (e.g. rainfall), and parameters with short or non-predictable history report `unavailable` rather than numbers. Stations without enough stored history (currently `CAU-001`, `VRS-001`) show the readiness state instead of a forecast.
 - **No ML for turbidity-index readings.** No representative labelled index dataset exists yet, so the exclusion is retained by design; the training workflow is documented in [docs/TURBIDITY_INDEX_ML.md](docs/TURBIDITY_INDEX_ML.md).
-- **No incident/inspection workflow or drift monitoring** — Incidents, Inspections and Laboratory remain labelled prototypes (demonstration records, no endpoints). Rate limiting still covers only the authentication endpoints (login/registration), not every public or authority route, and there is no account lockout. See [docs/FEATURE_STATUS.md](docs/FEATURE_STATUS.md) §6 for the full open-findings table.
+- **Incident/inspection UI is not wired; Inspections has no backend.** The incident and
+  laboratory *backend* is complete and tested, but the Incidents and Laboratory pages still
+  render labelled demonstration records; Inspections has no endpoints at all. Rate limiting
+  now covers login, registration, device login and device activation, but not every public or
+  authority route, and there is no account lockout. See
+  [docs/FEATURE_STATUS.md](docs/FEATURE_STATUS.md) §6 for the full open-findings table.
 - **Production security is still UNVERIFIED.** The static checker and its tests only prove the code fails closed; the deployment checklist above has not been exercised on a real environment.
 - **Intentional schema drift remains open** — the legacy tables/columns listed above are still in the database by design (no drops); `alembic check` will keep flagging them until a reviewed migration is written.
 

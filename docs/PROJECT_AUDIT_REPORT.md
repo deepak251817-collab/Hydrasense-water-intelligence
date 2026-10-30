@@ -36,9 +36,13 @@ Verified by executing code or tests in this checkout:
 | Reading + ML analysis endpoints | backend + 27 frontend integration tests |
 | Model health + evaluation report endpoint | `tests/test_ml_status.py` and frontend `model-health.test.tsx` |
 | Public station / latest / history / suitability | public API tests + `PublicSource` tests |
-| QR URL generation | frontend test asserts the encoded URL |
+| Station QR generation (png/svg/pdf) | `tests/test_qr.py` — backend endpoints + authority page |
+| Device-number login | `tests/test_device_registry.py` — generic errors, one device per account, 429 |
+| Notification dedup / cooldown / preferences | `tests/test_notifications.py` — SMTP-unconfigured reported honestly |
+| Incident workflow + PDF report | `tests/test_incidents.py` — RBAC, forward-only transitions, verbatim lab results, PDF honesty |
+| MQTT credentials + ingestion bounds enforced | `tests/test_security_hardening.py`, `tests/test_telemetry.py`, `tests/test_production_config.py` |
 | Interactive API docs | `/docs`, `/openapi.json` |
-| 353 automated tests | 152 backend, 140 ML, 61 frontend — all passing |
+| 672 automated tests | 462 backend, 140 ML, 70 frontend — all passing |
 
 ## 3. Features that are code-complete but not verified here
 
@@ -62,7 +66,7 @@ Verified by executing code or tests in this checkout:
 | Water map | ✅ stations, 🕳 map canvas |
 | Analytics | 🧪 selectors, ✅ model health, 🕳 SHAP |
 | Authority alerts (station danger-level alerts) | ✅ `GET /api/authority/alerts` (acknowledgement still local) |
-| Incidents / Inspections / Laboratory | 🧪 demo records behind a visible prototype banner (no endpoints) |
+| Incidents / Inspections / Laboratory | 🧪 demo records behind a visible prototype banner (backend exists for incidents/lab — the page is not wired; Inspections has no endpoints) |
 | Water sources | 🧪 |
 | Station detail | 🧪 keyed by mock ids (real ML card 404s) |
 | Public check-water / nearby sources / warnings / my checks | 🧪 |
@@ -79,7 +83,7 @@ Full matrix: [FEATURE_STATUS.md](FEATURE_STATUS.md).
 | `usgs_turbidity_2024.csv` | 10,000 | forecasting feature + target | same; **all Provisional** |
 | `usgs_temperature_2024.csv` | 10,000 | forecasting feature | same |
 | `usgs_conductance_2024.csv` | 10,000 | forecasting feature | same |
-| `sensor_readings.csv` | 9 | Isolation Forest training/eval | own simulator, 2026-08-31 |
+| `sensor_readings.csv` | 9 | kept for provenance only; no longer used to fit the Isolation Forest | own simulator, 2026-08-31 |
 
 Derived: 7,601 synchronized USGS rows → 5,321/1,140/1,139 forecast splits; 70,560/15,120/15,120
 supervised splits; 6/0/3 telemetry splits. Details: [DATASET_CATALOG.md](DATASET_CATALOG.md).
@@ -102,7 +106,7 @@ Report: [DATA_CLEANING_REPORT.md](DATA_CLEANING_REPORT.md).
 
 | Model | Live? | Output | Honest meaning |
 |---|---|---|---|
-| Isolation Forest | yes | `anomaly_label`, `anomaly_score` | Unusual relative to **6 training rows** — demonstration, not validation |
+| Isolation Forest | yes | `anomaly_label`, `anomaly_score` | Unusual relative to the benchmark's feature distribution (70,560 training rows, unsupervised — labels unused); not contamination, and not this hardware's telemetry |
 | Random Forest | yes | `Safe`/`Unsafe` + probabilities | The benchmark's deterministic label rule over 4 features; not potability |
 | XGBoost | no | `deterioration_target` | Rule-based one-step deterioration indicator on USGS features |
 
@@ -110,7 +114,7 @@ Regenerated metrics (identical to the committed report):
 
 - Random Forest: n=15,120, accuracy **0.999868**, macro F1 **0.999843**, ROC-AUC **1.0000**,
   confusion matrix `[[4535, 1], [1, 10583]]`.
-- Isolation Forest: n=9, **4 flagged** (44.4 %), scores −0.022505 … 0.103192.
+- Isolation Forest: n=15,120 scored, **727 flagged** (rate 0.0481), scores −0.1002 … 0.1582.
 - XGBoost: n=1,139, accuracy **0.943810**, balanced accuracy **0.537570**, macro F1 **0.528364**,
   ROC-AUC **0.628764**, Unsafe recall **0.1111** (3 of 27).
 
@@ -147,16 +151,17 @@ Never start the backend with `python run_server.py`. Detailed setup: [README.md]
 
 ## 10. Limitations to state in the presentation
 
-1. **Anomaly model is a demonstration** — 6 training rows, 9 scored readings; no validated detection
-   rate, no ground-truth labels.
+1. **Anomaly model has no ground truth** — trained unsupervised on benchmark feature
+   distributions (70,560 rows), no field telemetry, no contamination labels; the reported flag
+   rate is descriptive only.
 2. **Benchmark provenance missing** and the label is a deterministic rule; field accuracy unknown.
 3. **XGBoost is offline only**, single station, ~5 weeks, balanced accuracy 0.54.
 4. **Much of the authority dashboard is mock UI** (command centre KPIs, five-page remnants, the top board of Live Monitoring); station detail is keyed by mock ids. *(Alerts threshold card corrected in the validation pass, and the Alerts page itself is now served by the real `GET /api/authority/alerts`.)*
-5. **Incident, inspection, lab and notification backends are missing**; those three pages are
-   prototypes and now say so in a visible banner (demonstration records only; laboratory entries
-   are not four-sensor measurements). (Alerting **was added**: `GET /api/product/alerts` + a
-   versioned threshold profile that separates official BIS values from project-configured ones,
-   plus the authority-wide `GET /api/authority/alerts`.)
+5. **Incident and laboratory backends now exist** (`/api/authority/incidents` + lab contacts +
+   PDF report, tests in `tests/test_incidents.py`), but the Incidents/Laboratory **pages** still
+   render labelled demonstration records and Inspections still has no backend. (Alerting:
+   `GET /api/product/alerts` + a versioned threshold profile, plus the authority-wide
+   `GET /api/authority/alerts`; notifications now have a delivery service with dedup/cooldown.)
 6. **Product-user reading submission is implemented** — `POST /api/product/tests` accepts a stable
    live window (or a clearly labelled demo) and `POST /api/product/activate` binds codes with
    ownership checks; the Activate, check-water and history screens call them.
@@ -236,7 +241,41 @@ Never start the backend with `python run_server.py`. Detailed setup: [README.md]
 > - **Schema drift documented, not dropped:** `alembic check` failure analysed — legacy
 >   `water_tests` / `water_test_assessments` / `water_test_predictions` tables and retired
 >   `product_devices.device_name` / `expires_at` columns are unreferenced by application code
->   (grep-verified) and intentionally kept; migration history untouched, head = `a9b0c1d2e3f4`.
+>   (grep-verified) and intentionally kept; migration history untouched, head = `b8c9d0e1f2a3`.
+>
+> **Implementation sprint (`feature/final-remediation`, 2026-10-29/30).** Ten deliverables,
+> each committed separately:
+> - **Firmware calibration gating** — pH two/three-point linear and quadratic fits, TDS
+>   quadratic fit with temperature compensation, `PH_CALIBRATED` / `TDS_CALIBRATED` /
+>   `TURBIDITY_CALIBRATED` actually gate published values (uncalibrated publishes `null`),
+>   firmware README corrected (stale 1.1378 V comment, nonexistent `TDS_CAL_V*` constants).
+> - **Device registry + device-number login** — `POST /api/auth/device-login`,
+>   `tests/test_device_registry.py`.
+> - **Notification service** — `notifications` table (migration `a7b8c9d0e1f2`), dedup,
+>   cooldown, per-user preferences, delivery log with honest `skipped_unconfigured` state,
+>   `tests/test_notifications.py`.
+> - **Incident + laboratory workflow + PDF** — `incidents.py` + `incident_service.py` +
+>   migration `b8c9d0e1f2a3`, forward-only transitions with audit trail, verbatim lab results,
+>   PDF report, `tests/test_incidents.py`. The Incidents/Laboratory **pages** are still labelled
+>   demos; Inspections still has no backend.
+> - **Station QR generation** — backend png/svg/pdf endpoints + authority QR page,
+>   `tests/test_qr.py`.
+> - **Dataset inspection + anomaly retrain** — `ml/scripts/inspect_datasets.py` and
+>   `ml/reports/dataset_inspection.md`; Isolation Forest retrained on cleaned real
+>   distributions, artifacts versioned in `ml/models/model_manifest.json`; 140 ML tests green.
+> - **Mock-screen honesty** — `WaterCheck.tsx` now renders the real public suitability API
+>   (no client-side verdicts); demo notices on Command Center, Water Sources, Analytics,
+>   Station Detail, Nearby, Warnings; fabricated sidebar probe count removed; `MyChecks`
+>   “Safe” badge replaced; `PrototypeBanner` no longer claims “no backend” for incidents.
+> - **Security hardening** — MQTT credentials required in production, TLS required for
+>   non-loopback brokers, ingestion bounds (TDS ≤ 50 000 ppm, turbidity ≤ 4 000 NTU, index ≤
+>   100), device activation rate-limited, HTTPS `PUBLIC_BASE_URL` and tracked-secret scan in
+>   `verify_production_config.py`, canonical checklist in `docs/DEPLOYMENT_VERIFICATION.md`
+>   (all 14 real-environment steps still **not run**).
+>
+> Test evidence for the sprint: backend **462 passed** (exit 0, 627 s), ML **140 passed**,
+> frontend **70 passed**, `npm run build` exit 0, `npm run lint` 0 errors (1 pre-existing
+> warning). Deployment security remains **UNVERIFIED**.
 
 ### 1. Close the privilege-escalation hole (minutes, highest urgency) — **DONE**
 `POST /api/auth/register` previously honoured a caller-supplied `role`. It now forces
@@ -247,38 +286,38 @@ is missing or (in production) insecure.
 **Why first:** it was a security defect in an otherwise defensible project, and it was the
 cheapest fix in this list.
 
-### 2. Record dataset provenance and make data acquisition reproducible (hours)
-Add `ml/data/external/SOURCES.md` (URL, publisher, access date, license, row count, checksum) for
-`water_quality_dataset1.csv`, and a documented `ml/scripts/fetch_usgs.py` that reproduces the four
-USGS queries (station, parameter codes, date range, 10,000-row cap). Fix the misleading `*_2024.csv`
-names or document the cap.
+### 2. Record dataset provenance and make data acquisition reproducible (hours) — **PARTIAL**
+`ml/reports/dataset_inspection.{md,json}` (from `ml/scripts/inspect_datasets.py`) now records
+columns, units, row counts, duplicates, missing values and label balance for every external
+dataset, and `ml/reports/dataset_cleaning_report.md` records SHA-256 + row reconciliation.
+Still missing: `ml/data/external/SOURCES.md` with publisher/URL/license/access date per file and
+a fetch script that reproduces the USGS queries; the misleading `*_2024.csv` names remain.
 **Why second:** every examiner question about the 99.99 % accuracy ends at "where did the data come
-from", and today the repository has no answer.
+from".
 
-### 3. Either retrain the anomaly model on real data or demote it explicitly (days)
-Collect genuine telemetry (hardware or a longer simulator run with realistic diurnal/noise patterns),
-re-export, re-split chronologically, retrain the Isolation Forest, and re-run
-`detect_anomalies.py` + the evaluation report. If real data is not available before submission,
-relabel the model everywhere as a pipeline demonstration and remove any wording that implies
-detection capability.
+### 3. Either retrain the anomaly model on real data or demote it explicitly (days) — **DONE**
+The Isolation Forest was retrained on the cleaned real distributions (the 9-row model is gone),
+artifacts are versioned in `ml/models/model_manifest.json`, and metrics are recomputed into
+`ml/reports/evaluation_report.md`. Honest limit that remains: the data is still benchmark data,
+not telemetry from this hardware, so the model flags unusual patterns — it does not detect
+contamination.
 **Why third:** it is the largest gap between the slides people want to show and what the code can
 defend.
 
-### 4. Make the authority dashboard consistent with the backend (days)
-Replace `mockData` on Command Center, Live Monitoring's upper board, Water Sources, Analytics and
-Station Detail with the existing `/authority/stations`, `/readings` and `/ml/status` endpoints; key
-Station Detail by `station_code` so `MlLatestCard` resolves. For Alerts / Incidents / Inspections /
-Laboratory, either build minimal real endpoints or label the pages "prototype" in the UI.
+### 4. Make the authority dashboard consistent with the backend (days) — **PARTIAL**
+Alerts, QR codes, suitability, forecasts and station telemetry are served by real endpoints.
+Still open: Command Center, Live Monitoring's upper board, Water Sources, Analytics and parts of
+Station Detail mix in mock data; the Incidents and Laboratory pages are not yet wired to their
+(now existing) endpoints; Inspections has no backend; Station Detail is keyed by mock ids on the
+map paths. Every one of these surfaces now carries a visible demo/prototype notice.
 **Why fourth:** it prevents a live demo from showing fabricated numbers next to real ones, which is
 the fastest way to lose credibility.
 
-### 5. Add the product-user reading path or remove it from scope (days)
-Implement `POST /product/readings` (upload a personal device measurement) and
-`POST /product/activate` so the Activate page and the personal check flow call real endpoints, with
-ownership checks. Otherwise remove those routes from the navigation and present the product-user area
-as account + device management only.
-**Why fifth:** it is the only user-facing workflow that currently promises something the backend
-cannot do, and it is a coherent, self-contained feature to finish.
+### 5. Add the product-user reading path or remove it from scope (days) — **DONE**
+`POST /api/product/tests` accepts a stable live window (or a labelled demo) with ownership checks
+and persists the full assessment; `POST /api/product/activate` binds codes with row locking;
+`POST /api/auth/device-login` signs in the bound account from the printed device number. All
+rate-limited and covered by `tests/test_product_tests.py` and `tests/test_device_registry.py`.
 
 Lower-priority follow-ups: wire the cleaned copies into the training scripts, add coverage reporting,
 add browser E2E tests, add rate limiting, and containerise PostgreSQL + Mosquitto for reproducible
@@ -305,8 +344,11 @@ frontend test suites, lint and build were re-run after the changes and are green
 ## 13. Bottom line
 
 The backend, database, standards engine and ML serving path are real, tested and unusually careful
-about not inventing data. The weak points are equally clear: a demonstration-only anomaly model, a
-benchmark dataset with no recorded provenance, a security hole in registration, and a dashboard that
-mixes live telemetry with mock operations screens. Fixing items 1 and 2 is a day's work and removes
-the two questions most likely to derail a viva; items 3–5 determine whether the project reads as a
-working prototype or a finished system.
+about not inventing data. The weak points are equally clear: a benchmark dataset with no recorded
+provenance, operations screens (command centre, incidents, inspections, lab) that still show labelled
+demonstration data, an anomaly model trained on benchmark rather than field telemetry, and a
+production deployment that has never been exercised. The registration privilege-escalation hole,
+the default JWT secret, the missing rate limits and the anonymous-MQTT path are fixed and tested.
+Fixing the remaining mock screens is the single biggest step from “careful prototype” to “finished
+system”; the deployment checklist in `docs/DEPLOYMENT_VERIFICATION.md` is what would let anyone
+say the deployment itself is verified.

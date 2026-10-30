@@ -325,8 +325,9 @@ integration gap, not a hidden one.
 
 **44. What testing do you have?**
 
-353 automated tests: 152 backend (auth, RBAC, telemetry contract, ML API, suitability, water sources),
-140 ML (pipeline, leakage, reproducibility, persistence, SHAP, forecasting), 61 frontend (turbidity
+672 automated tests: 462 backend (auth, RBAC, telemetry contract, ML API, suitability, water
+sources, device registry, notifications, incidents/lab workflow, QR, production-config checks),
+140 ML (pipeline, leakage, reproducibility, persistence, SHAP, forecasting), 70 frontend (turbidity
 unit handling, ML integration, suitability UI, model health). All pass in this checkout, and lint and
 production build are clean.
 
@@ -338,12 +339,15 @@ so do not quote a coverage percentage.
 
 **46. What are the biggest limitations?**
 
-1. Isolation Forest trained on 9 rows (6 train) — a demonstration, not a detector.
+1. Isolation Forest now trained on the cleaned benchmark distributions (no longer 9 rows), but
+   still without field telemetry — an unusual-pattern flagger, not a detector.
 2. Benchmark provenance unknown and label rule unverified; live accuracy unproven.
-3. Large parts of the authority dashboard are mock UI.
-4. No alerting/incident/notification backend; no product-user reading submission.
-5. Hardware deployment unverified; turbidity is a relative index, pH/TDS uncalibrated by default.
-6. Security gaps in role assignment, CORS and secret defaults.
+3. Large parts of the authority dashboard are mock UI (Incidents/Laboratory pages are labelled
+   demos even though their backend exists; Inspections has no backend).
+4. No hardware deployment log; no live broker end-to-end test; hardware turbidity index
+   uncalibrated against NTU.
+5. Security: tokens in `localStorage`, seeded demo credentials, rate limits on auth + activation
+   only, and a production deployment that is still UNVERIFIED.
 
 **47. What would you do first with more time?**
 
@@ -371,4 +375,4 @@ If asked any of these, give the honest short answer and move to the remaining-wo
 | "Is the ESP32 deployed at the river?" | "Firmware is implemented and contract-tested; no field deployment is recorded." |
 | "Does it detect pollution?" | "It flags unusual patterns and screens against standards; it does not confirm pollution." |
 | "How many users has it served?" | "None — this is a research prototype, not a deployed service." |
-| "What is your test coverage?" | "No coverage tool is configured; 353 tests pass, and I can list what they cover." |
+| "What is your test coverage?" | "No coverage tool is configured; 672 tests pass, and I can list what they cover." |
