@@ -708,6 +708,18 @@ This project deliberately constrains its claims:
 - **Validation pass — dashboard honesty.** The authority **Alerts** page threshold card no longer claims dissolved-oxygen, NTU or "AI risk" triggers: it shows the four-sensor project-configured tiers (turbidity index bands, TDS references, pH range), links `GET /api/product/alerts/profile` as the sourced authority, states that no SMS/webhook dispatch exists, and says explicitly that unmeasured parameters are never part of the tiers. The public **My Checks** page no longer shows fabricated lake/reservoir history quoted in NTU — it shows clearly-labelled demonstration entries for the three rivers with relative-index wording.
 - **One central four-parameter suitability engine.** Every suitability decision now flows through `backend/app/services/suitability_engine.py`, which accepts **exactly** pH, TDS, temperature and turbidity (any other key raises `ValueError`, so dissolved oxygen, ML scores, rainfall, history or location can never influence a result), delegates to the per-purpose threshold profiles in `water_screening.py`, and emits one canonical four-state vocabulary — `within_configured_ranges` / `caution` / `outside_configured_ranges` / `insufficient_data` — defined in `screening_states.py` and shared with the station engine (`water_suitability.py`). Product tests persist it in a new `overall_state` column (migration `a9b0c1d2e3f4`, backfilled from stored assessments) and serve it next to the unchanged legacy `overall_status`, so existing screens keep working. Invalid, stale, unstable or non-finite readings always collapse to `insufficient_data` — never a positive result. Tests: `backend/tests/test_suitability_engine.py` (49 tests).
 
+- **Rule-based recommendations derived from triggered rules.** `backend/app/services/recommendations.py`
+  attaches advice to every non-passing assessment, keyed by `(use, parameter, direction)` and built
+  only from the parameter entries the engine actually evaluated. Causes are worded as *possible*,
+  never asserted; drinking advice always ends with laboratory confirmation and the explicit statement
+  that these four sensors cannot confirm the water is safe; temperature carries no advice because no
+  temperature threshold is configured; unmeasured quantities (EC/SAR, microbiology, dissolved oxygen,
+  heavy metals, rainfall, ML outputs) appear only in `missing_assessments`, each phrased "not measured
+  by these sensors". Public and product responses carry consumer advice only — the incident workflow
+  steps (grab sample, upstream inspection, notify the pollution control authority, track the lab
+  result) are added exclusively on authority routes. Tests: `backend/tests/test_recommendations.py`
+  (206 tests, one per rule plus behaviour and API-surface checks).
+
 - **Turbidity-unvalidated results can no longer read as a full pass.** In the product screening
   engine (`water_screening.py`) any use whose profile rates turbidity (drinking, domestic,
   swimming, general) now caps its best possible result at `REVIEW_RECOMMENDED` (canonical

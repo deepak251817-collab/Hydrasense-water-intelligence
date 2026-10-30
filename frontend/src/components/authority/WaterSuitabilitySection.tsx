@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import type {
   ApiError,
+  RecommendationSet,
   StationSuitabilityResponse,
   SuitabilityParameterStatus,
   WaterSuitabilityAssessment,
@@ -53,6 +54,13 @@ const STATUS_STYLES: Record<SuitabilityParameterStatus, string> = {
   outside_limits: "bg-red-100 text-red-700 border-red-200",
   not_measured: "bg-slate-100 text-slate-500 border-slate-200",
   not_comparable: "bg-amber-50 text-amber-700 border-amber-200",
+};
+
+const EMPTY_ADVICE: RecommendationSet = {
+  recommendations: [],
+  missing_assessments: [],
+  urgency: null,
+  authority_actions: [],
 };
 
 const FRESHNESS_LABELS: Record<string, string> = {
@@ -219,6 +227,7 @@ export default function WaterSuitabilitySection({
   }
 
   const quality = active.data_quality;
+  const advice = active.recommendations ?? EMPTY_ADVICE;
 
   return (
     <div
@@ -363,6 +372,84 @@ export default function WaterSuitabilitySection({
               </li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {/* Rule-based recommendations (backend-derived; empty for a pass) */}
+      {advice.recommendations.length > 0 && (
+        <div data-testid="suitability-recommendations">
+          <SectionLabel
+            icon={<ShieldAlert className="h-3.5 w-3.5" />}
+            text={`Recommended next steps${advice.urgency ? ` · ${advice.urgency} urgency` : ""}`}
+          />
+          <div className="mt-2 space-y-2">
+            {advice.recommendations.map((item) => (
+              <div
+                key={`${item.parameter}-${item.direction}`}
+                className="rounded-xl border border-slate-100 bg-white p-3"
+                data-testid={`recommendation-${item.parameter}`}
+              >
+                <p className="text-xs font-bold text-slate-800">
+                  {item.label}
+                  {item.value !== null && (
+                    <span className="font-semibold text-slate-500">
+                      {" — "}
+                      {formatNumber(item.value)}
+                      {item.unit ? ` ${item.unit}` : ""}
+                    </span>
+                  )}
+                </p>
+                {item.reason && (
+                  <p className="mt-0.5 text-[11px] text-slate-500">{item.reason}</p>
+                )}
+                {item.possible_causes.length > 0 && (
+                  <p className="mt-1.5 text-[11px] leading-relaxed text-slate-600">
+                    <span className="font-semibold text-slate-700">Possible causes: </span>
+                    {item.possible_causes.join(" ")}
+                  </p>
+                )}
+                <ul className="mt-1.5 space-y-1">
+                  {item.actions.map((action) => (
+                    <li key={action} className="flex items-start gap-1.5 text-[11px] text-slate-600">
+                      <Info className="mt-0.5 h-3 w-3 shrink-0 text-cyan-500" />
+                      <span>{action}</span>
+                    </li>
+                  ))}
+                </ul>
+                {item.avoid.length > 0 && (
+                  <p className="mt-1.5 text-[11px] text-amber-700">
+                    <span className="font-semibold">Avoid: </span>
+                    {item.avoid.join(" ")}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+          {advice.missing_assessments.length > 0 && (
+            <ul className="mt-2 space-y-1">
+              {advice.missing_assessments.map((missing) => (
+                <li key={missing} className="flex items-start gap-2 text-[11px] text-slate-500">
+                  <FlaskConical className="mt-0.5 h-3 w-3 shrink-0 text-slate-400" />
+                  <span>{missing}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {advice.authority_actions.length > 0 && (
+            <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3" data-testid="authority-actions">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-amber-700">
+                Incident workflow (authority)
+              </p>
+              <ol className="mt-1.5 space-y-1">
+                {advice.authority_actions.map((step, index) => (
+                  <li key={step} className="flex items-start gap-2 text-[11px] text-amber-900">
+                    <span className="font-bold">{index + 1}.</span>
+                    <span>{step}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
         </div>
       )}
 

@@ -42,7 +42,7 @@ Verified by executing code or tests in this checkout:
 | Incident workflow + PDF report | `tests/test_incidents.py` — RBAC, forward-only transitions, verbatim lab results, PDF honesty |
 | MQTT credentials + ingestion bounds enforced | `tests/test_security_hardening.py`, `tests/test_telemetry.py`, `tests/test_production_config.py` |
 | Interactive API docs | `/docs`, `/openapi.json` |
-| 672 automated tests | 462 backend, 140 ML, 70 frontend — all passing |
+| 882 automated tests | 668 backend, 140 ML, 74 frontend — all passing |
 
 ## 3. Features that are code-complete but not verified here
 
@@ -273,8 +273,8 @@ Never start the backend with `python run_server.py`. Detailed setup: [README.md]
 >   `verify_production_config.py`, canonical checklist in `docs/DEPLOYMENT_VERIFICATION.md`
 >   (all 14 real-environment steps still **not run**).
 >
-> Test evidence for the sprint: backend **462 passed** (exit 0, 627 s), ML **140 passed**,
-> frontend **70 passed**, `npm run build` exit 0, `npm run lint` 0 errors (1 pre-existing
+> Test evidence for the sprint: backend **668 passed** (exit 0, 378 s), ML **140 passed**,
+> frontend **74 passed**, `npm run build` exit 0, `npm run lint` 0 errors (1 pre-existing
 > warning). Deployment security remains **UNVERIFIED**.
 
 ### 1. Close the privilege-escalation hole (minutes, highest urgency) — **DONE**

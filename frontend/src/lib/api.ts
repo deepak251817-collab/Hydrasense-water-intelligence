@@ -335,6 +335,8 @@ export interface ProductTestAssessment {
   next_steps: string[];
   prediction: ProductPrediction;
   reference_profile?: Record<string, unknown>;
+  /** Rule-based advice from the engine; empty for a passing result. */
+  recommendations?: RecommendationSet;
 }
 
 export interface ProductWaterTest {
@@ -794,6 +796,28 @@ export interface SuitabilityDataQuality {
   excluded_parameters: { parameter: string; reason?: string | null }[];
 }
 
+export interface RecommendationItem {
+  parameter: string;
+  label: string;
+  direction: string;
+  status: string | null;
+  value: number | null;
+  unit: string;
+  reason: string | null;
+  urgency: "low" | "medium" | "high";
+  possible_causes: string[];
+  actions: string[];
+  avoid: string[];
+}
+
+/** Rule-based advice attached by the backend; empty for a passing result. */
+export interface RecommendationSet {
+  recommendations: RecommendationItem[];
+  missing_assessments: string[];
+  urgency: "low" | "medium" | "high" | null;
+  authority_actions: string[];
+}
+
 export interface WaterSuitabilityAssessment {
   use: string;
   use_label: string;
@@ -809,6 +833,8 @@ export interface WaterSuitabilityAssessment {
   measured_values: SuitabilityMeasuredValue[];
   limitations: string[];
   data_quality: SuitabilityDataQuality;
+  /** Absent only from older cached payloads; the backend always sends it. */
+  recommendations?: RecommendationSet;
 }
 
 /** GET /{authority|public}/stations/{code}/suitability */

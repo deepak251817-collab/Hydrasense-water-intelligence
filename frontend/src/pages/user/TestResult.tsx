@@ -24,6 +24,7 @@ import type {
   ProductReadingAssessment,
   ProductWaterTest,
   ProductWaterTestSummary,
+  RecommendationSet,
 } from "../../lib/api";
 import { productApi } from "../../lib/api";
 import { clearAuth, getToken } from "../../lib/auth";
@@ -36,6 +37,13 @@ const PARAMETER_ICONS: Record<string, typeof Droplets> = {
 };
 
 const PARAMETER_ORDER = ["ph", "tds", "turbidity", "temperature"] as const;
+
+const EMPTY_ADVICE: RecommendationSet = {
+  recommendations: [],
+  missing_assessments: [],
+  urgency: null,
+  authority_actions: [],
+};
 
 const STATUS_STYLES: Record<
   string,
@@ -311,6 +319,7 @@ export default function TestResult() {
   }
 
   const { assessment } = test;
+  const advice = assessment.recommendations ?? EMPTY_ADVICE;
   const overallStyle = statusStyle(assessment.overall.status);
   const OverallIcon = overallStyle.icon;
   const suitabilityStyle = statusStyle(assessment.suitability.result);
@@ -686,6 +695,78 @@ export default function TestResult() {
           </ul>
         </section>
       </div>
+
+      {/* Rule-based advice derived from the triggered screening rules */}
+      {advice.recommendations.length > 0 && (
+        <section
+          className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"
+          data-testid="assessment-recommendations"
+        >
+          <h2 className="text-lg font-bold text-slate-900">
+            What this result means
+            {advice.urgency ? (
+              <span className="ml-2 align-middle text-xs font-semibold uppercase tracking-wide text-amber-600">
+                {advice.urgency} urgency
+              </span>
+            ) : null}
+          </h2>
+          <div className="mt-4 space-y-3">
+            {advice.recommendations.map((item) => (
+              <div
+                key={`${item.parameter}-${item.direction}`}
+                className="rounded-xl border border-slate-100 bg-slate-50 p-4"
+                data-testid={`user-recommendation-${item.parameter}`}
+              >
+                <p className="text-sm font-bold text-slate-800">
+                  {item.label}
+                  {item.value !== null ? (
+                    <span className="font-semibold text-slate-500">
+                      {" — "}
+                      {Number.isInteger(item.value)
+                        ? item.value
+                        : item.value.toFixed(2)}
+                      {item.unit ? ` ${item.unit}` : ""}
+                    </span>
+                  ) : null}
+                </p>
+                {item.reason ? (
+                  <p className="mt-0.5 text-xs text-slate-500">{item.reason}</p>
+                ) : null}
+                {item.possible_causes.length > 0 && (
+                  <p className="mt-2 text-xs leading-relaxed text-slate-600">
+                    <span className="font-semibold text-slate-700">Possible causes: </span>
+                    {item.possible_causes.join(" ")}
+                  </p>
+                )}
+                <ul className="mt-2 space-y-1">
+                  {item.actions.map((action) => (
+                    <li key={action} className="flex items-start gap-2 text-xs text-slate-600">
+                      <ArrowRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-cyan-600" aria-hidden="true" />
+                      <span>{action}</span>
+                    </li>
+                  ))}
+                </ul>
+                {item.avoid.length > 0 && (
+                  <p className="mt-2 text-xs text-amber-700">
+                    <span className="font-semibold">Avoid: </span>
+                    {item.avoid.join(" ")}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+          {advice.missing_assessments.length > 0 && (
+            <ul className="mt-3 space-y-1.5">
+              {advice.missing_assessments.map((missing) => (
+                <li key={missing} className="flex items-start gap-2 text-xs text-slate-500">
+                  <FlaskConical className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden="true" />
+                  <span>{missing}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
 
       {/* Data quality */}
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">

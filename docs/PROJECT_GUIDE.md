@@ -40,15 +40,15 @@ services, the UI states and the test suite.
 
 | Check | Command | Result |
 |---|---|---|
-| Backend tests | `cd backend && python -m pytest tests -q` | **462 passed**, 4 warnings, 627 s |
+| Backend tests | `cd backend && python -m pytest tests -q` | **668 passed**, 4 warnings, 378 s |
 | ML tests | `python -m pytest ml/tests -q` | **140 passed**, 23 s |
-| Frontend tests | `cd frontend && npm test` | **70 passed** in 6 files, 10.9 s |
+| Frontend tests | `cd frontend && npm test` | **74 passed** in 6 files, ~10 s |
 | Frontend lint | `cd frontend && npm run lint` | 0 errors, 1 warning (`react-refresh` on `components/ui/button.tsx`) |
 | Frontend build | `cd frontend && npm run build` | exit 0 (`tsc -b && vite build`); Vite warns one chunk > 500 kB |
 | ML evaluation | `python ml/scripts/build_evaluation_report.py` | rewrote `ml/reports/evaluation_report.json` with identical metrics |
 | Dataset cleaning | `python ml/preprocessing/clean_datasets.py` | 6 datasets, 140,809 rows in → 140,809 out, 0 removed, all checks pass |
 
-**Total automated tests: 672 (462 + 140 + 70), all passing.**
+**Total automated tests: 882 (668 + 140 + 74), all passing.**
 
 Runtime pinned in the evaluation report: Python 3.11.9, scikit-learn 1.4.2, pandas 2.2.2,
 numpy 1.26.4.
@@ -475,7 +475,7 @@ hydrasense-water-intelligence/
 │   ├── app/schemas/         pydantic request/response contracts
 │   ├── alembic/versions/    7 migrations
 │   ├── scripts/             seed_demo.py seed_ml_readings.py
-│   └── tests/               462 tests (SQLite in-memory, no broker needed)
+│   └── tests/               668 tests (SQLite in-memory, no broker needed)
 ├── ml/                      datasets, preprocessing, scripts, models, reports, tests
 │   ├── data/external/       4 USGS CSVs + benchmark table
 │   ├── data/raw/            sensor_readings.csv export

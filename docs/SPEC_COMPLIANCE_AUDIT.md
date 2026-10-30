@@ -129,7 +129,7 @@ others mock/missing), **Missing** (no code path), **Unable to verify** (needs ha
 6. **Dataset inspection + ML retraining + version pinning** — **done**; forecasting uncertainty interval remains open (no probabilistic model).
 7. **Mock-screen removal/label pass** — **labelled**; Command Center / Water Sources / Analytics / Station Detail / Incidents / Laboratory / Inspections still show demos.
 8. **MQTT broker auth/TLS + rate limits + ingestion bounds** — **code done**; broker-side ACL/TLS verification still open.
-9. **Test sprint + docs/test-count update** — **done**: 462 backend + 140 ML + 70 frontend = 672 passing, docs updated.
+9. **Test sprint + docs/test-count update** — **done**: 668 backend + 140 ML + 74 frontend = 882 passing, docs updated.
 
 ## 11. Unable to verify (list)
 

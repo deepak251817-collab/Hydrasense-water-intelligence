@@ -19,7 +19,7 @@
 | 4 | 4:00–5:30 | **Telemetry card**: point at the "Uncalibrated / Sensor failed / Simulated" states | "NULL means no honest measurement. The schema, API and UI all preserve that; nothing is defaulted to 'safe'." |
 | 5 | 5:30–7:00 | **ML analysis card + model health** (`/authority/analytics`, Model Health card is real) | "Two models run live at ingestion; a third is offline only. The health card reads the evaluation report, including the 99.99 % benchmark accuracy *and* the XGBoost balanced accuracy of 0.5376." |
 | 6 | 7:00–8:30 | **Live ingestion** — run the simulator or publish a payload, then refresh | "New reading → validation → duplicate guard → assessment → ML → visible in the API and the card." |
-| 7 | 8:30–10:00 | **Proof of verification** — terminal: `python -m pytest ml/tests -q` or show `ml/reports/evaluation_report.md` | "140 ML tests, 462 backend tests, 70 frontend tests. Every metric in the report is recomputed from artifacts, not typed in." |
+| 7 | 8:30–10:00 | **Proof of verification** — terminal: `python -m pytest ml/tests -q` or show `ml/reports/evaluation_report.md` | "140 ML tests, 668 backend tests, 74 frontend tests. Every metric in the report is recomputed from artifacts, not typed in." |
 
 ---
 
@@ -180,7 +180,7 @@ If the backend, database or broker refuses to cooperate:
    `backend/app/services/water_suitability.py` (BIS/CPCB criteria, result codes).
 2. **Show the proof** — terminal:
    ```bash
-   python -m pytest backend/tests -q      # 462 passed
+   python -m pytest backend/tests -q      # 668 passed
    python -m pytest ml/tests -q           # 140 passed
    ```
 3. **Show the metrics** — `ml/reports/evaluation_report.md`, including the limitations block.
@@ -201,7 +201,7 @@ If the backend, database or broker refuses to cooperate:
 | Say "specific conductance" for USGS parameter 95 | Say "TDS from USGS" |
 | Say "firmware implemented and contract-tested" | Claim a hardware deployment you did not run |
 | Show Model Health, Telemetry, ML, Suitability, Map, Public page | Wander into Alerts/Incidents/Inspections/Lab during the technical demo |
-| Mention 672 passing tests | Claim "95 % test coverage" (no coverage report exists) |
+| Mention 882 passing tests | Claim "95 % test coverage" (no coverage report exists) |
 | Quote the cleaning run's real numbers | Claim "we cleaned thousands of dirty records" (0 were removed) |
 
 ---
@@ -218,5 +218,5 @@ If the backend, database or broker refuses to cooperate:
 8. Metrics **with the honesty frame** (table: accuracy vs balanced accuracy vs recall)
 9. Public QR workflow (screenshot of `ARK-001` page)
 10. Product-user workflow (account, device binding, device list — mark the check flow as prototype)
-11. Verification evidence (672 tests, 6-dataset cleaning audit, reproducible evaluation report)
+11. Verification evidence (882 tests, 6-dataset cleaning audit, reproducible evaluation report)
 12. Limitations + five remaining tasks (from the audit report)

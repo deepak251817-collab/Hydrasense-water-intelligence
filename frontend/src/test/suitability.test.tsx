@@ -238,6 +238,66 @@ describe("WaterSuitabilitySection", () => {
     expect(screen.getByText(/TDS is not electrical conductivity/)).toBeInTheDocument();
   });
 
+  it("renders backend recommendations with causes, actions and missing assessments", async () => {
+    const advised = drinking({
+      recommendations: {
+        recommendations: [
+          {
+            parameter: "tds",
+            label: "Total dissolved solids",
+            direction: "above",
+            status: "outside_limits",
+            value: 2400,
+            unit: "mg/L",
+            reason: "Above the configured screening range.",
+            urgency: "high",
+            possible_causes: ["Possible upstream discharge — not confirmed by this reading."],
+            actions: ["Re-sample and repeat the TDS measurement before acting on it."],
+            avoid: ["Avoid relying on this water until the reading is re-confirmed."],
+          },
+        ],
+        missing_assessments: [
+          "EC, SAR, chloride and boron are not measured by these sensors.",
+        ],
+        urgency: "high",
+        authority_actions: [
+          "Collect a labelled grab sample at the station.",
+          "Notify the pollution control authority and raise an incident.",
+        ],
+      },
+    });
+    mockFetch({ ...response(), assessments: [advised] });
+
+    render(<WaterSuitabilitySection stationCode="ARK-001" mode="public" />);
+
+    const block = await screen.findByTestId("suitability-recommendations");
+    expect(block).toHaveTextContent("high urgency");
+    expect(screen.getByTestId("recommendation-tds")).toHaveTextContent(
+      "Re-sample and repeat the TDS measurement"
+    );
+    expect(block).toHaveTextContent("not measured by these sensors");
+    expect(screen.getByTestId("authority-actions")).toHaveTextContent(
+      "Notify the pollution control authority"
+    );
+  });
+
+  it("omits the advice block when the backend sends an empty set", async () => {
+    const clean = drinking({
+      recommendations: {
+        recommendations: [],
+        missing_assessments: [],
+        urgency: null,
+        authority_actions: [],
+      },
+    });
+    mockFetch({ ...response(), assessments: [clean] });
+
+    render(<WaterSuitabilitySection stationCode="ARK-001" mode="public" />);
+
+    await screen.findByTestId("suitability-result");
+    expect(screen.queryByTestId("suitability-recommendations")).not.toBeInTheDocument();
+  });
+
   it("never presents the rule-based screening as machine learning", async () => {
     mockFetch(response());
     render(<WaterSuitabilitySection stationCode="ARK-001" mode="public" />);

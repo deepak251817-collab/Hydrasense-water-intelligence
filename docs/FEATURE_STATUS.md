@@ -191,6 +191,19 @@ Verification: backend `462 passed`, ML `140 passed`, frontend `vitest 70 passed`
 | MQTT anonymous broker + unbounded ingestion | Backend could connect anonymously; absurd values (e.g. TDS 10⁹) were stored | `MQTT_USERNAME`/`MQTT_PASSWORD` required in production (fail-fast), `MQTT_ALLOW_ANONYMOUS` explicit opt-in rejected by the checker, `MQTT_USE_TLS` required for non-loopback brokers, per-run TLS/CA wiring and reconnect backoff in `mqtt_service.py`; ingestion bounds TDS ≤ 50 000 ppm, turbidity ≤ 4 000 NTU, index ≤ 100, non-finite rejected; `POST /product/activate` throttled (`RATE_LIMIT_ACTIVATE_MAX`) | `tests/test_security_hardening.py`, `tests/test_production_config.py`, `tests/test_telemetry.py`, `tests/test_device_registry.py` |
 | Deployment checklist incomplete | Static checker missed MQTT, TLS, public URL and secret hygiene | `verify_production_config.py` now checks MQTT auth, broker TLS, HTTPS `PUBLIC_BASE_URL`, finite ingestion bounds and runs `git ls-files` for tracked secret files; canonical checklist with 14 still-unrun real-environment steps in `docs/DEPLOYMENT_VERIFICATION.md` | `python scripts/verify_production_config.py` (exits 1 on a dev `.env`, as intended) |
 
+### Resolved in this pass (rule-based recommendation engine, 2026-10-30)
+
+| Area | What was enforced | Resolution | Evidence |
+|---|---|---|---|
+| Advice derived from triggered rules | The spec requires recommendations keyed by `(use, parameter, direction)` returned only for caution / not-suitable / insufficient results, built from the rules the engine actually triggered | New `app/services/recommendations.py` with a closed rule table over `(use, parameter, direction)`; both engines attach it to every assessment (`suitability_engine.evaluate`, `water_suitability.assess_use`), and it returns an empty set for `within_configured_ranges` so no advice is invented for a rule that did not fire | `tests/test_recommendations.py` (206 tests: rule-table contract, per-rule content, behaviour, API surfaces) |
+| Only the four inputs can shape advice | Causes/actions must never name an unmeasured parameter | `UNMEASURED_TERMS` guard: every rule's causes/actions/avoid are tested against it; unmeasured quantities (EC/SAR, microbiology, DO, heavy metals, rainfall, ML outputs) appear **only** in `missing_assessments`, each phrased "not measured by these sensors" | `test_rule_never_names_an_unmeasured_parameter`, `test_unmeasured_external_inputs_cannot_shape_advice` |
+| Honest wording | Causes asserted, drinking advice implying safety, advice for temperature | Causes are worded "possible … — a single reading cannot identify the source"; every drinking action ends with laboratory confirmation and the explicit "cannot confirm that the water is safe"; no rule exists for temperature (no configured threshold) | `test_rule_causes_are_hedged_not_asserted`, `test_drinking_advice_*`, `test_no_rule_exists_for_temperature` |
+| Incident steps are authority-only | Public/product responses must not expose the incident workflow | `recommendations.build(authority=True)` is invoked only on authority routes (`_add_authority_actions` in `app/api/v1/authority.py`); public and product schemas default to an empty set | `test_public_suitability_returns_recommendations`, `test_authority_suitability_adds_incident_steps`, `test_authority_actions_require_the_authority_view` |
+| Direction recorded by the engine | Advice differs for above/below breaches | `water_suitability._direction()` records which side of the configured range was evaluated; the screening engine passes its own `direction` through | `test_pH_direction_changes_the_advice`, `test_high_tds_is_severe_and_high_urgency` |
+
+Verification: backend `668 passed` (462 existing + 206 new), exit 0, 378 s; ML `140 passed`;
+frontend `vitest 74 passed`, `tsc --noEmit` exit 0, `npm run build` exit 0, `npm run lint` 0 errors.
+
 ### Remaining limitations
 
 | Finding | Severity | Detail | Fix direction |

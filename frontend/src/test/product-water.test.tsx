@@ -248,6 +248,76 @@ describe("Water assessment result page", () => {
     expect(screen.getAllByText(/simulated data/i).length).toBeGreaterThan(0);
   });
 
+  it("renders rule-based advice from the backend", async () => {
+    vi.mocked(productApi.getTest).mockResolvedValue(
+      makeTest({
+        assessment: {
+          ...BASE_ASSESSMENT,
+          recommendations: {
+            recommendations: [
+              {
+                parameter: "tds",
+                label: "Total dissolved solids",
+                direction: "above",
+                status: "above_acceptable",
+                value: 2400,
+                unit: "mg/L",
+                reason: "Above the configured screening range.",
+                urgency: "high",
+                possible_causes: ["Possible upstream discharge — not confirmed by this reading."],
+                actions: [
+                  "Re-sample and repeat the TDS measurement before acting on it.",
+                  "Arrange laboratory confirmation before relying on this water: these four sensors cannot confirm that the water is safe.",
+                ],
+                avoid: ["Avoid relying on this water until the reading is re-confirmed."],
+              },
+            ],
+            missing_assessments: [
+              "Microbiological indicators and chemical contaminants beyond pH, TDS, " +
+                "temperature and turbidity are not measured by these sensors — " +
+                "they require laboratory testing.",
+            ],
+            urgency: "high",
+            authority_actions: [],
+          },
+        },
+      })
+    );
+
+    renderResult();
+
+    const block = await screen.findByTestId("assessment-recommendations");
+    expect(block).toHaveTextContent("high urgency");
+    expect(screen.getByTestId("user-recommendation-tds")).toHaveTextContent(
+      "Re-sample and repeat the TDS measurement"
+    );
+    expect(block).toHaveTextContent("cannot confirm that the water is safe");
+    expect(block).toHaveTextContent("not measured by these sensors");
+    // Incident steps belong to the authority view only.
+    expect(screen.queryByTestId("authority-actions")).not.toBeInTheDocument();
+  });
+
+  it("omits the advice block when the backend returns an empty set", async () => {
+    vi.mocked(productApi.getTest).mockResolvedValue(
+      makeTest({
+        assessment: {
+          ...BASE_ASSESSMENT,
+          recommendations: {
+            recommendations: [],
+            missing_assessments: [],
+            urgency: null,
+            authority_actions: [],
+          },
+        },
+      })
+    );
+
+    renderResult();
+
+    await screen.findByRole("heading", { name: /water quality assessment/i });
+    expect(screen.queryByTestId("assessment-recommendations")).not.toBeInTheDocument();
+  });
+
   it("shows a retry state when the assessment cannot be loaded", async () => {
     vi.mocked(productApi.getTest).mockRejectedValue({
       detail: "Unable to load this water assessment.",

@@ -325,9 +325,10 @@ integration gap, not a hidden one.
 
 **44. What testing do you have?**
 
-672 automated tests: 462 backend (auth, RBAC, telemetry contract, ML API, suitability, water
-sources, device registry, notifications, incidents/lab workflow, QR, production-config checks),
-140 ML (pipeline, leakage, reproducibility, persistence, SHAP, forecasting), 70 frontend (turbidity
+882 automated tests: 668 backend (auth, RBAC, telemetry contract, ML API, suitability, water
+sources, device registry, notifications, incidents/lab workflow, QR, production-config checks,
+recommendation engine),
+140 ML (pipeline, leakage, reproducibility, persistence, SHAP, forecasting), 74 frontend (turbidity
 unit handling, ML integration, suitability UI, model health). All pass in this checkout, and lint and
 production build are clean.
 
@@ -375,4 +376,4 @@ If asked any of these, give the honest short answer and move to the remaining-wo
 | "Is the ESP32 deployed at the river?" | "Firmware is implemented and contract-tested; no field deployment is recorded." |
 | "Does it detect pollution?" | "It flags unusual patterns and screens against standards; it does not confirm pollution." |
 | "How many users has it served?" | "None — this is a research prototype, not a deployed service." |
-| "What is your test coverage?" | "No coverage tool is configured; 672 tests pass, and I can list what they cover." |
+| "What is your test coverage?" | "No coverage tool is configured; 882 tests pass, and I can list what they cover." |
