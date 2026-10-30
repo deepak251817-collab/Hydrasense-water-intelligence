@@ -65,6 +65,21 @@ class Settings(BaseSettings):
     RATE_LIMIT_REGISTER_MAX: int = 10
     RATE_LIMIT_REGISTER_WINDOW_SECONDS: int = 3600
 
+    # --- Notifications -------------------------------------------------------
+    # Email is the only implemented channel; when SMTP_HOST is empty the
+    # service records deliveries as "skipped_unconfigured" and logs instead -
+    # it never breaks ingestion or alerting. SMTP credentials live only in .env.
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM: str = "hydrasense@localhost"
+    SMTP_USE_TLS: bool = True
+    # Suppression window (seconds) for repeated notifications with the same
+    # dedup key, and the maximum number of notifications per user per window.
+    NOTIFICATION_COOLDOWN_SECONDS: int = 900
+    NOTIFICATION_MAX_PER_WINDOW: int = 10
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

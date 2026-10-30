@@ -160,9 +160,28 @@ def list_my_alerts(
     for test in tests:
         items.extend(test_alerts(test))
 
+    # Dispatch: whatever alerts were derived from real stored data become
+    # (debounced) notifications for this account. The service never fires on
+    # suppressed categories / cooldowns and never crashes the endpoint.
+    from app.services import notification_service
+
+    dispatch_results = []
+    for alert in items:
+        try:
+            _, reason = notification_service.notify_alert(db, current_user, alert)
+            dispatch_results.append(reason)
+        except Exception:  # pragma: no cover - delivery must never 500
+            dispatch_results.append("error")
+
     # Most recent first, capped by the requested limit; the response also
     # carries the active threshold profile (official vs project-configured).
-    return alert_response(items, limit)
+    response = alert_response(items, limit)
+    response["notification_dispatch"] = {
+        "attempted": len(items),
+        "by_reason": {r: dispatch_results.count(r) for r in set(dispatch_results)},
+        "channel": "email",
+    }
+    return response
 
 
 @router.get("/alerts/profile")
@@ -179,6 +198,96 @@ def get_alert_threshold_profile(
     from app.services.alert_thresholds import profile_payload
 
     return profile_payload()
+
+
+@router.get("/notifications")
+def get_my_notifications(
+    limit: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(get_current_product_user),
+    db: Session = Depends(get_db),
+):
+    """This account's notification history (the delivery log)."""
+
+    from app.services import notification_service
+
+    rows = notification_service.list_for_user(db, current_user.id, limit=limit)
+    return {
+        "total": len(rows),
+        "channel": "email",
+        "items": [
+            {
+                "id": row.id,
+                "category": row.category,
+                "severity": row.severity,
+                "title": row.title,
+                "body": row.body,
+                "status": row.status,
+                "dedup_key": row.dedup_key,
+                "created_at": row.created_at,
+                "sent_at": row.sent_at,
+            }
+            for row in rows
+        ],
+    }
+
+
+@router.get("/notification-preferences")
+def get_my_notification_preferences(
+    current_user: User = Depends(get_current_product_user),
+    db: Session = Depends(get_db),
+):
+    """Per-category email opt-out rows (missing category = enabled)."""
+
+    from app.services import notification_service
+
+    rows = notification_service.preferences_for_user(db, current_user.id)
+    return {
+        "channel": "email",
+        "items": [
+            {
+                "category": row.category,
+                "channel": row.channel,
+                "enabled": row.enabled,
+            }
+            for row in rows
+        ],
+    }
+
+
+@router.put("/notification-preferences/{category}")
+def set_my_notification_preference(
+    category: str,
+    enabled: bool = Query(...),
+    current_user: User = Depends(get_current_product_user),
+    db: Session = Depends(get_db),
+):
+    """Enable/disable email notifications for one alert category."""
+
+    from app.models.notification import NotificationPreference
+
+    pref = (
+        db.query(NotificationPreference)
+        .filter(
+            NotificationPreference.user_id == current_user.id,
+            NotificationPreference.category == category,
+            NotificationPreference.channel == "email",
+        )
+        .first()
+    )
+    if pref is None:
+        pref = NotificationPreference(
+            user_id=current_user.id, category=category, channel="email", enabled=enabled
+        )
+        db.add(pref)
+    else:
+        pref.enabled = enabled
+    db.commit()
+    db.refresh(pref)
+    return {
+        "category": pref.category,
+        "channel": pref.channel,
+        "enabled": pref.enabled,
+    }
 
 
 @router.post(

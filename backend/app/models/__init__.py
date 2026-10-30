@@ -9,6 +9,7 @@ from app.models.water import (
 from app.models.water_test import LiveWaterAssessment, ProductWaterTest
 from app.models.simulation import SimulationRun
 from app.models.rate_limit import RateLimitCounter
+from app.models.notification import Notification, NotificationPreference
 
 __all__ = [
     "User",
@@ -22,4 +23,6 @@ __all__ = [
     "LiveWaterAssessment",
     "SimulationRun",
     "RateLimitCounter",
+    "Notification",
+    "NotificationPreference",
 ]
