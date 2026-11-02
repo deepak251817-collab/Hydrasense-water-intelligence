@@ -79,8 +79,7 @@ class TestSimulationService:
             .all()
         )
         assert {row.use_code for row in rows} == {
-            use for use in ("drinking", "domestic", "bathing", "irrigation",
-                            "industrial", "aquatic_life")
+            use for use in ("drinking", "domestic", "irrigation", "industrial")
         }
 
     def test_seeded_generation_is_reproducible(self, db_session, seeded_water_data):
@@ -342,6 +341,189 @@ class TestSimulationAPI:
         assert res.status_code == 400
 
 
+class TestDemoScenarios:
+    """The five demo scenarios each produce the readings they advertise."""
+
+    @staticmethod
+    def _sample(db_session, code, scenario):
+        return sim.generate_sample(
+            db_session, code, scenario=scenario, seed=17, update_run=False
+        )
+
+    def test_rain_runoff_raises_the_turbidity_index_alert(
+        self, db_session, seeded_water_data
+    ):
+        reading = self._sample(db_session, seeded_water_data["station"].station_code,
+                               "rain_runoff")
+        alerts = reading_alerts(reading, now=datetime.now(timezone.utc))
+        turbidity = next(a for a in alerts if a["parameter"] == "turbidity_index")
+        assert turbidity["severity"] in ("warning", "critical")
+        assert reading.turbidity_index is not None
+
+    def test_industrial_discharge_raises_ph_and_tds_alerts(
+        self, db_session, seeded_water_data
+    ):
+        reading = self._sample(
+            db_session, seeded_water_data["station"].station_code,
+            "industrial_discharge",
+        )
+        alerts = reading_alerts(reading, now=datetime.now(timezone.utc))
+        ph = next(a for a in alerts if a["parameter"] == "ph")
+        tds = next(a for a in alerts if a["parameter"] == "tds")
+        assert ph["severity"] == "critical"
+        assert tds["severity"] in ("warning", "critical")
+        assert reading.ph is not None and reading.ph > 8.5
+        assert reading.tds is not None and reading.tds > 500
+
+    def test_sewage_like_lowers_ph_and_raises_tds(
+        self, db_session, seeded_water_data
+    ):
+        reading = self._sample(
+            db_session, seeded_water_data["station"].station_code, "sewage_like"
+        )
+        alerts = reading_alerts(reading, now=datetime.now(timezone.utc))
+        ph = next(a for a in alerts if a["parameter"] == "ph")
+        assert ph["severity"] == "critical"
+        assert reading.ph is not None and reading.ph < 6.0
+        assert reading.tds is not None and reading.tds > 750
+
+    def test_sensor_fault_raises_missing_value_alerts(
+        self, db_session, seeded_water_data
+    ):
+        reading = self._sample(
+            db_session, seeded_water_data["station"].station_code, "sensor_fault"
+        )
+        alerts = reading_alerts(reading, now=datetime.now(timezone.utc))
+        missing = [a for a in alerts if a["value"] is None]
+        assert missing, "a NULL sensor must raise a not-reporting alert"
+        # The alert never invents a numeric value for the failed sensor.
+        assert all(a["value"] is None for a in missing)
+
+    def test_normal_reading_keeps_a_plausible_range(
+        self, db_session, seeded_water_data
+    ):
+        reading = self._sample(
+            db_session, seeded_water_data["station"].station_code, "normal"
+        )
+        assert reading.source == "simulator"
+        assert 6.5 <= reading.ph <= 8.5
+        assert 0 <= reading.turbidity_index <= 100
+
+    def test_state_payload_publishes_scenario_labels(
+        self, db_session, seeded_water_data
+    ):
+        payload = sim.state_payload(db_session)
+        assert payload["scenario_labels"]["rain_runoff"] == "Rain runoff (turbidity up)"
+        assert payload["scenario_labels"]["industrial_discharge"]
+
+    def test_industrial_discharge_reaches_the_recommendation_card(
+        self, client, authority_token_headers, seeded_water_data
+    ):
+        """The suitability/recommendation surface reacts to the scenario."""
+        code = seeded_water_data["station"].station_code
+        generated = client.post(
+            "/api/simulation/generate",
+            headers=authority_token_headers,
+            json={"station_code": code, "scenario": "industrial_discharge",
+                  "count": 1},
+        )
+        assert generated.status_code == 200, generated.text
+
+        # The standards-based BIS view must never score a simulated value: it
+        # reports insufficient data rather than a fake compliance verdict.
+        standards = client.get(
+            f"/api/authority/stations/{code}/suitability",
+            headers=authority_token_headers,
+        )
+        assert standards.status_code == 200, standards.text
+        drinking = next(
+            a for a in standards.json()["assessments"] if a["use"] == "drinking"
+        )
+        assert drinking["result"] == "insufficient_data"
+        assert all(p["status"] == "not_comparable" for p in drinking["parameters"])
+        assert all(
+            "Simulated demonstration value" in p["note"]
+            for p in drinking["parameters"]
+        )
+
+        # The shared screening/recommendation engine (used by Live Monitoring)
+        # does react to the scenario, while still labelling it simulated.
+        live = client.get(
+            f"/api/authority/stations/{code}/live-assessment?use=drinking",
+            headers=authority_token_headers,
+        )
+        assert live.status_code == 200, live.text
+        advice = live.json()["assessment"]["recommendations"]
+        parameters = {
+            item["parameter"] for item in advice["recommendations"]
+        }
+        assert parameters & {"ph", "tds"}, "the pH/TDS jump must drive an action"
+        assert advice["urgency"] in ("medium", "high")
+
+
+class TestSimulationReset:
+    def test_service_reset_pauses_and_clears_counters(
+        self, db_session, seeded_water_data
+    ):
+        code = seeded_water_data["station"].station_code
+        sim.start(db_session, code, scenario="industrial_discharge", seed=3)
+        sim.generate_sample(db_session, code, scenario="industrial_discharge", seed=3,
+                            update_run=True)
+        run = sim.reset(db_session)
+        assert run.status == "paused"
+        assert run.station_code is None
+        assert run.scenario == "normal"
+        assert run.seed is None
+        assert run.step == 0 and run.samples_generated == 0
+        assert run.worker_id is None and run.lease_expires_at is None
+
+    def test_reset_endpoint_requires_authority(
+        self, client, product_token_headers
+    ):
+        assert client.post(
+            "/api/simulation/reset", headers=product_token_headers
+        ).status_code == 403
+        assert client.post("/api/simulation/reset").status_code == 401
+
+    def test_reset_endpoint_returns_cleared_state(
+        self, client, authority_token_headers, seeded_water_data
+    ):
+        code = seeded_water_data["station"].station_code
+        client.post(
+            "/api/simulation/generate",
+            headers=authority_token_headers,
+            json={"station_code": code, "scenario": "normal", "count": 1},
+        )
+        res = client.post("/api/simulation/reset", headers=authority_token_headers)
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["running"] is False
+        assert body["station_code"] is None
+        assert body["samples_generated"] == 0
+        assert body["scenario"] == "normal"
+
+    def test_authority_alert_view_never_dispatches_notifications(
+        self, client, authority_token_headers, db_session, seeded_water_data
+    ):
+        """The panel reads alerts; simulated samples must not send anything."""
+        from app.models.notification import Notification
+
+        client.post(
+            "/api/simulation/generate",
+            headers=authority_token_headers,
+            json={
+                "station_code": seeded_water_data["station"].station_code,
+                "scenario": "industrial_discharge",
+                "count": 1,
+            },
+        )
+        res = client.get("/api/authority/alerts", headers=authority_token_headers)
+        assert res.status_code == 200, res.text
+        items = res.json()["items"]
+        assert any(item["source"] == "simulator" for item in items)
+        assert db_session.query(Notification).count() == 0
+
+
 # ---------------------------------------------------------------------------
 # Danger-level alerts
 # ---------------------------------------------------------------------------
@@ -425,7 +607,7 @@ class TestThresholdProfile:
 
     def test_profile_is_versioned_and_classified(self):
         payload = self._profile()
-        assert payload["profile_version"] == "alert-thresholds-2026.10.1"
+        assert payload["profile_version"] == "alert-thresholds-2026.10.2"
         assert payload["official_count"] >= 3
         assert payload["project_configured_count"] >= 2
         assert "must never be presented as BIS, WHO" in payload["disclaimer"]
@@ -455,6 +637,30 @@ class TestThresholdProfile:
                 # Index conditions live on the 0–100 scale, never on 1/5 NTU.
                 assert 0 < condition["value"] <= 100
                 assert condition["value"] not in (1.0, 5.0)
+
+    def test_index_alert_bands_are_55_and_85(self):
+        """The index warning/critical bands are the configured 55 and 85."""
+        by_key = {t["key"]: t for t in self._profile()["thresholds"]}
+        bands = by_key["turbidity_index_bands"]
+        warning = [c["value"] for c in bands["warning_conditions"]]
+        critical = [c["value"] for c in bands["critical_conditions"]]
+        assert warning == [55.0]
+        assert critical == [85.0]
+        # An index value is alerted on index points, never on an NTU number.
+        assert all(1 < value <= 100 for value in warning + critical)
+
+    def test_critical_band_fires_only_above_the_index_band(self):
+        reading = _reading(turbidity_index=84.0, turbidity=84.0)
+        alerts = reading_alerts(reading, now=NOW)
+        index = next(a for a in alerts if a["parameter"] == "turbidity_index")
+        assert index["severity"] == "warning"
+        critical = reading_alerts(
+            _reading(turbidity_index=85.0, turbidity=85.0), now=NOW
+        )
+        critical_index = next(
+            a for a in critical if a["parameter"] == "turbidity_index"
+        )
+        assert critical_index["severity"] == "critical"
 
     def test_alert_response_includes_the_profile(self):
         items = reading_alerts(_reading(ph=5.1), now=NOW)

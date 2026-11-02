@@ -1,0 +1,12 @@
+{
+  "version": "0.2.0",
+  "inputs": [
+    {
+      "name": "workspace",
+      "path": "/mnt/c/Users/deepa/OneDrive/Documents/My_projects/hydrasense-water-intelligence"
+    }
+  ],
+  "flags": {
+    "noCfs": true
+  }
+}

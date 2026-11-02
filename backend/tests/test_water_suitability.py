@@ -217,19 +217,6 @@ class TestResultCategories:
         assert param(result, "ph")["status"] == "within_acceptable"
         assert result["result"] == "insufficient_data"
 
-    def test_bathing_reports_missing_microbiology_and_oxygen(self):
-        reading = make_reading(
-            1, ph=7.0, tds=200.0, turbidity=1.0, turbidity_unit="ntu",
-            diagnostics=calibrated_diag(ph="calibrated", tds="calibrated", turbidity="calibrated"),
-        )
-        result = assessment(reading, "bathing")
-        assert result["result"] == "insufficient_data"
-        missing = {m["parameter"] for m in result["missing_parameters"]}
-        assert {"dissolved_oxygen", "bod", "total_coliform"} <= missing
-        # TDS is not a Class B criterion, so it is not evaluated at all there.
-        assert all(p["parameter"] != "tds" for p in result["parameters"])
-        assert any(v["parameter"] == "tds" for v in result["measured_values"])
-
     def test_stale_reading_is_never_a_current_conclusion(self):
         old = NOW - timedelta(hours=3)
         reading = make_reading(

@@ -109,13 +109,6 @@ export default function PublicSourceCard({ source }: PublicSourceCardProps) {
                 source.publicSuitability.irrigation === "Caution" ? "text-amber-600" : "text-red-600"
               }`}>{source.publicSuitability.irrigation}</span>
             </div>
-            <div className="flex items-center justify-between rounded-lg bg-slate-50 px-2.5 py-1.5 border border-slate-100">
-              <span className="text-slate-600 font-medium">Recreation</span>
-              <span className={`font-bold ${
-                source.publicSuitability.recreation === "Safe" ? "text-emerald-600" :
-                source.publicSuitability.recreation === "Caution" ? "text-amber-600" : "text-red-600"
-              }`}>{source.publicSuitability.recreation}</span>
-            </div>
           </div>
         </div>
       </div>

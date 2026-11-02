@@ -15,6 +15,18 @@ STATIONS = [
 SCENARIOS = ["normal", "deteriorating", "sudden_event", "sensor_fault"]
 
 
+def turbidity_band(index: float) -> str:
+    """Firmware band for the relative index (NOT NTU).
+
+    CLEARER < 30, MODERATE 30-54, CLOUDIER >= 55 (higher = cloudier).
+    """
+    if index < 30.0:
+        return "CLEARER"
+    if index < 55.0:
+        return "MODERATE"
+    return "CLOUDIER"
+
+
 class SensorSimulator:
     def __init__(self, broker: str = "localhost", port: int = 1883, scenario: str = "normal"):
         self.broker = broker
@@ -46,24 +58,28 @@ class SensorSimulator:
         self.step_counter += 1
         now_iso = datetime.now(timezone.utc).isoformat()
 
+        # `turbidity` is the RELATIVE INDEX 0-100 (clear = 0, milky reference
+        # = 100, higher = cloudier) — the same scale the ESP32 reports. It is
+        # NOT NTU: these numbers were converted from the earlier NTU-style
+        # values, not merely relabelled.
         if self.scenario == "normal":
             ph = round(7.0 + random.uniform(-0.3, 0.4), 2)
-            turbidity = round(3.0 + random.uniform(0.0, 5.0), 2)
+            turbidity = round(18.0 + random.uniform(0.0, 8.0), 1)
             tds = round(210.0 + random.uniform(-15.0, 25.0), 1)
             temperature = round(26.5 + random.uniform(-1.0, 1.5), 1)
 
         elif self.scenario == "deteriorating":
-            # Gradual increase in turbidity & TDS, slight shift in pH
+            # Gradual increase in turbidity index & TDS, slight shift in pH
             drift = min(self.step_counter * 0.8, 30.0)
             ph = round(7.2 - min(self.step_counter * 0.05, 1.2) + random.uniform(-0.1, 0.1), 2)
-            turbidity = round(10.0 + drift * 1.5 + random.uniform(-1.0, 2.0), 2)
+            turbidity = round(min(25.0 + drift * 1.6 + random.uniform(-2.0, 4.0), 100.0), 1)
             tds = round(300.0 + drift * 12.0 + random.uniform(-10.0, 10.0), 1)
             temperature = round(27.0 + random.uniform(-0.5, 0.5), 1)
 
         elif self.scenario == "sudden_event":
-            # Sharp contamination spike
+            # Sharp contamination spike: very cloudier index, acidic pH, high TDS
             ph = round(5.4 + random.uniform(-0.2, 0.2), 2)
-            turbidity = round(78.5 + random.uniform(-5.0, 10.0), 2)
+            turbidity = round(min(92.0 + random.uniform(-3.0, 5.0), 100.0), 1)
             tds = round(1150.0 + random.uniform(-40.0, 60.0), 1)
             temperature = round(29.2 + random.uniform(-0.8, 0.8), 1)
 
@@ -72,22 +88,22 @@ class SensorSimulator:
             fault_type = self.step_counter % 4
             if fault_type == 0:
                 ph = 16.5  # Invalid pH > 14
-                turbidity = 5.2
+                turbidity = 5.0
                 tds = 220.0
                 temperature = 25.0
             elif fault_type == 1:
                 ph = 7.1
-                turbidity = -15.0  # Invalid negative turbidity
+                turbidity = -15.0  # Invalid negative index
                 tds = 220.0
                 temperature = 25.0
             elif fault_type == 2:
                 ph = 7.1
-                turbidity = 5.2
+                turbidity = 5.0
                 tds = -50.0  # Invalid negative TDS
                 temperature = 25.0
             else:
                 ph = 7.1
-                turbidity = 5.2
+                turbidity = 5.0
                 tds = 220.0
                 temperature = 120.0  # Invalid high temp
 
@@ -104,9 +120,10 @@ class SensorSimulator:
             "timestamp": now_iso,
             "pH": ph,
             "turbidity": turbidity,
-            # The simulator models NTU-style turbidity (unlike the ESP32's
-            # relative index 0-100), so it states its unit explicitly.
-            "turbidity_unit": "ntu",
+            # The simulator reports the same relative index the ESP32 does
+            # (0-100, higher = cloudier) and states its unit explicitly.
+            "turbidity_unit": "relative_index_0_100",
+            "turbidity_status": turbidity_band(turbidity) if turbidity is not None else None,
             "tds": tds,
             "temperature": temperature,
         }

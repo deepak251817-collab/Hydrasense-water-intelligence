@@ -128,8 +128,8 @@ def render_pdf_label(
         (
             "The public page shows the four measured parameters (pH, TDS, "
             "temperature, relative turbidity index), data freshness and "
-            "rule-based suitability screening for drinking, domestic, swimming "
-            "and agricultural uses. It is a preliminary screening, not a "
+            "rule-based suitability screening for drinking, domestic and "
+            "irrigation uses. It is a preliminary screening, not a "
             "laboratory safety certification.",
             "small",
         ),

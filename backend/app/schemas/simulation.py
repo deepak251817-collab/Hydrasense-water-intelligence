@@ -5,7 +5,7 @@ response so a client can never present them as live sensor data.
 """
 
 from datetime import datetime
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -60,6 +60,7 @@ class SimulationStateResponse(BaseModel):
     simulated: bool = True
     label: str = "SIMULATED DATA — NOT LIVE SENSOR DATA"
     scenarios: List[str]
+    scenario_labels: Dict[str, str] = Field(default_factory=dict)
     # Persistence / duplicate-loop visibility: state lives in PostgreSQL and
     # only the lease-holding worker generates samples.
     persistent: bool = True

@@ -40,10 +40,25 @@ from app.services.water_suitability import assess_reading, persist_assessments
 
 SCENARIOS = (
     "normal",
+    "rain_runoff",
+    "industrial_discharge",
+    "sewage_like",
     "gradual_deterioration",
     "sudden_change",
     "sensor_fault",
 )
+
+# Human labels for the API/UI. Only the five demo scenarios are offered in the
+# floating panel; the three legacy drifts stay supported for existing clients.
+SCENARIO_LABELS = {
+    "normal": "Normal",
+    "rain_runoff": "Rain runoff (turbidity up)",
+    "industrial_discharge": "Industrial discharge (TDS and pH jump)",
+    "sewage_like": "Sewage-like (TDS up, pH down)",
+    "sensor_fault": "Sensor fault (null readings)",
+    "gradual_deterioration": "Gradual deterioration",
+    "sudden_change": "Sudden change",
+}
 
 DEFAULT_INTERVAL_SECONDS = 5.0
 # How long one worker's generation lease is valid without renewal. Long enough
@@ -180,6 +195,31 @@ def pause(db: Session, worker_id: Optional[str] = None) -> SimulationRun:
     return run
 
 
+def reset(db: Session, worker_id: Optional[str] = None) -> SimulationRun:
+    """Pause the run and clear its configuration and counters.
+
+    Generated readings stay in ``sensor_readings`` (they are labelled
+    ``source = "simulator"`` and may back a demo already in progress), but the
+    next Start begins again from step 0 with no station, scenario or seed.
+    """
+    run = get_run(db)
+    run.status = "paused"
+    run.station_code = None
+    run.source_code = None
+    run.scenario = "normal"
+    run.seed = None
+    run.interval_seconds = DEFAULT_INTERVAL_SECONDS
+    run.step = 0
+    run.samples_generated = 0
+    run.started_at = None
+    run.last_sample_at = None
+    run.worker_id = None
+    run.lease_expires_at = None
+    db.commit()
+    db.refresh(run)
+    return run
+
+
 def claim_lease(db: Session, worker_id: str, now: Optional[datetime] = None) -> bool:
     """Atomically claim/renew the generation lease for this worker.
 
@@ -232,6 +272,23 @@ def _next_values(
             index += 28.0 + rng.uniform(0.0, 8.0)
             tds += 180.0 + rng.uniform(0.0, 40.0)
             ph -= 0.5
+    elif scenario == "rain_runoff":
+        # First-flush runoff: cloudier water, some dissolved load, near-neutral
+        # pH. Turbidity index crosses the firmware CLOUDIER band (>= 55).
+        index += 34.0 + rng.uniform(0.0, 8.0)
+        tds += 90.0 + rng.uniform(0.0, 40.0)
+        ph -= 0.25
+    elif scenario == "industrial_discharge":
+        # Alkaline effluent with a large dissolved load: TDS well above the
+        # acceptable reference and pH above the warning band, often critical.
+        tds += 900.0 + rng.uniform(0.0, 200.0)
+        ph += 1.9 + rng.uniform(0.0, 0.4)
+        index += 12.0 + rng.uniform(0.0, 6.0)
+    elif scenario == "sewage_like":
+        # Organic/sewage signature: high dissolved solids with acidic pH.
+        tds += 500.0 + rng.uniform(0.0, 120.0)
+        ph -= 1.5 + rng.uniform(0.0, 0.3)
+        index += 18.0 + rng.uniform(0.0, 6.0)
 
     values: Dict[str, Optional[float]] = {
         "ph": round(_clamp(ph, 4.0, 10.5), 2),
@@ -408,6 +465,7 @@ def state_payload(db: Session) -> Dict[str, Any]:
         "simulated": True,
         "label": "SIMULATED DATA — NOT LIVE SENSOR DATA",
         "scenarios": list(SCENARIOS),
+        "scenario_labels": dict(SCENARIO_LABELS),
         "persistent": True,
         "worker_holding_lease": lease_active,
         "recent_samples": recent_samples(db),

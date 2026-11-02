@@ -82,8 +82,8 @@ bool waterTempValid = false;
 // avoids prematurely saturating the index for the previously observed values.
 // Adjust only after recording your own clear/cloudy sample readings.
 // These values are not NTU calibration and do not certify water safety.
-const float TURBIDITY_CLEAR_SENSOR_VOLTAGE = 0.400f;
-const float TURBIDITY_CLOUDY_SENSOR_VOLTAGE = 0.100f;
+const float TURBIDITY_CLEAR_SENSOR_VOLTAGE  = 2.802f;
+const float TURBIDITY_CLOUDY_SENSOR_VOLTAGE = 2.163f;
 const float TURBIDITY_R1_OHMS = 10000.0f;  // sensor OUT -> A2 junction
 const float TURBIDITY_R2_OHMS = 20000.0f;  // A2 junction -> GND
 #define TURBIDITY_SAMPLE_COUNT 10
@@ -607,7 +607,7 @@ void setup() {
   // ---- Calibration fitting: real constants only; fails CLOSED to nulls ----
 #if PH_CALIBRATED
   phVAt7 = CAL_PH_V7;
-  phVoltsPerPh = (CAL_PH_V7 - CAL_PH_V4) / 3.0f;
+  phVoltsPerPh = (CAL_PH_V7 - CAL_PH_V4) / (7.00f - 4.01f);
   if (isfinite(phVAt7) && isfinite(phVoltsPerPh) &&
       CAL_PH_V4 > CAL_PH_V7 &&
       fabsf(phVoltsPerPh) >= 0.030f && fabsf(phVoltsPerPh) <= 0.120f) {

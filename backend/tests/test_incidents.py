@@ -287,6 +287,164 @@ def test_full_workflow_to_resolution(
     ]
 
 
+def test_notify_lab_emails_the_report_to_the_lab(
+    client, seeded_water_data, authority_token_headers, monkeypatch
+):
+    """With SMTP configured, notifying the lab really sends the report:
+    exactly one message, to the contact's address, PDF report attached."""
+
+    import app.core.config as config
+    import app.services.incident_service as incident_service
+
+    sent_messages = []
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout=None):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def starttls(self):
+            pass
+
+        def login(self, username, password):
+            pass
+
+        def send_message(self, message):
+            sent_messages.append(message)
+
+    monkeypatch.setattr(config.settings, "SMTP_HOST", "smtp.example", raising=False)
+    monkeypatch.setattr(incident_service.smtplib, "SMTP", FakeSMTP, raising=False)
+
+    station = seeded_water_data["station"]
+    contact = client.post(
+        "/api/authority/lab-contacts",
+        headers=authority_token_headers,
+        json={
+            "name": "Dr Rao",
+            "organization": "State Water Laboratory",
+            "email": "lab@example.org",
+        },
+    )
+    assert contact.status_code == 201, contact.text
+
+    incident = _create_incident(client, authority_token_headers, station)
+    notified = client.post(
+        f"/api/authority/incidents/{incident['id']}/notify-lab",
+        headers=authority_token_headers,
+        json={
+            "lab_contact_id": contact.json()["id"],
+            "note": "Please confirm the turbidity index reading.",
+        },
+    )
+    assert notified.status_code == 200, notified.text
+    body = notified.json()
+    assert body["status"] == "lab_notified"
+    assert body["lab_notification_status"] == "sent"
+    assert body["lab_notified_at"] is not None
+    # The audit trail records the delivery outcome.
+    assert "Report delivery: sent." in body["events"][-1]["note"]
+
+    assert len(sent_messages) == 1
+    message = sent_messages[0]
+    assert message["To"] == "lab@example.org"
+    assert incident["reference"] in message["Subject"]
+    assert station.station_code in message["Subject"]
+
+    # The report travels as a real PDF attachment, not as pasted text.
+    attachments = list(message.iter_attachments())
+    assert len(attachments) == 1
+    attachment = attachments[0]
+    assert attachment.get_content_type() == "application/pdf"
+    assert attachment.get_filename() == f"{incident['reference']}-report.pdf"
+    pdf = attachment.get_payload(decode=True)
+    assert pdf.startswith(b"%PDF-")
+    assert pdf.rstrip().endswith(b"%%EOF")
+
+    # The mail body keeps the honesty wording: four sensors only, and the
+    # report is explicitly not a safety certification.
+    body_part = message.get_body(preferencelist=("plain",))
+    assert body_part is not None
+    text = body_part.get_content()
+    assert "pH, TDS, temperature and a relative turbidity" in text
+    assert "not a safety certification" in text
+    assert "Please confirm the turbidity index reading." in text
+
+
+def test_notify_lab_smtp_failure_is_recorded_and_can_be_resent(
+    client, seeded_water_data, authority_token_headers, monkeypatch
+):
+    """A dead mail server must not break the workflow: the attempt is stored
+    honestly as 'failed', and the same incident can be notified again."""
+
+    import app.core.config as config
+    import app.services.incident_service as incident_service
+
+    class BrokenSMTP:
+        def __init__(self, host, port, timeout=None):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def starttls(self):
+            pass
+
+        def login(self, username, password):
+            pass
+
+        def send_message(self, message):
+            raise OSError("connection refused")
+
+    monkeypatch.setattr(config.settings, "SMTP_HOST", "smtp.example", raising=False)
+    monkeypatch.setattr(incident_service.smtplib, "SMTP", BrokenSMTP, raising=False)
+
+    station = seeded_water_data["station"]
+    contact = client.post(
+        "/api/authority/lab-contacts",
+        headers=authority_token_headers,
+        json={"name": "Lab", "organization": "Org", "email": "lab@example.org"},
+    )
+    assert contact.status_code == 201, contact.text
+    payload = {"lab_contact_id": contact.json()["id"]}
+
+    incident = _create_incident(client, authority_token_headers, station)
+    failed = client.post(
+        f"/api/authority/incidents/{incident['id']}/notify-lab",
+        headers=authority_token_headers,
+        json=payload,
+    )
+    assert failed.status_code == 200, failed.text
+    body = failed.json()
+    assert body["lab_notification_status"] == "failed"
+    assert body["lab_notified_at"] is None
+    # The workflow still advanced — delivery failure never blocks the response.
+    assert body["status"] == "lab_notified"
+    assert "Report delivery: failed." in body["events"][-1]["note"]
+
+    # Retrying on the still-'lab_notified' incident is allowed and succeeds.
+    class WorkingSMTP(BrokenSMTP):
+        def send_message(self, message):
+            pass
+
+    monkeypatch.setattr(incident_service.smtplib, "SMTP", WorkingSMTP, raising=False)
+    resent = client.post(
+        f"/api/authority/incidents/{incident['id']}/notify-lab",
+        headers=authority_token_headers,
+        json=payload,
+    )
+    assert resent.status_code == 200, resent.text
+    assert resent.json()["lab_notification_status"] == "sent"
+    assert resent.json()["lab_notified_at"] is not None
+
+
 def test_invalid_transitions_are_rejected(
     client, seeded_water_data, authority_token_headers
 ):

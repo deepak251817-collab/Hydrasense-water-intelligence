@@ -5,20 +5,32 @@ An AI-powered water quality intelligence and predictive response system. IoT sen
 > [!IMPORTANT]
 > **Data honesty policy**: ML outputs are model predictions, not laboratory confirmation. Simulator telemetry is for system development and stress testing — it is **not** scientific ground truth. A missing analysis is rendered as "Analysis unavailable", never as "Safe" or "Normal". See [Scientific Honesty & Limitations](#scientific-honesty--limitations).
 
+## Contents
+
+[Quick start](#quick-start-copy-paste) ·
+[Accounts, sign-in and what to do after login](#accounts-sign-in-and-what-to-do-after-login) ·
+[Getting started](#getting-started) ·
+[Datasets and metrics](#datasets-and-how-to-check-accuracy-f1-and-other-metrics) ·
+[API overview](#api-overview) ·
+[Testing](#testing) ·
+[Troubleshooting](#troubleshooting) ·
+[Scientific honesty & limitations](#scientific-honesty--limitations)
+
 ---
 
 ## Key Features
 
 - **IoT telemetry ingestion** — MQTT subscriber validates payloads (station, device, timestamp, pH, turbidity, TDS, temperature), rejects unknown stations, de-duplicates retries by `(device_id, timestamp)`, and commits readings to PostgreSQL before ML runs (ingestion is never blocked by ML).
-- **Honest turbidity units** — every reading stores its turbidity unit: ESP32 hardware sends a **provisional relative index 0–100** (higher = cloudier, *not* NTU), the simulator sends NTU, and rows with no unit stay “unknown”. The dashboard labels each case explicitly and never mixes units on one chart.
+- **Honest turbidity units** — every reading stores its turbidity unit: both ESP32 hardware and the simulator send a **provisional relative index 0–100** (higher = cloudier, *not* NTU), and rows with no unit stay “unknown”. The dashboard labels each case explicitly and never mixes units on one chart.
 - **Live ML inference on every reading** — Isolation Forest anomaly scoring + Random Forest Safe/Unsafe classification, written back to the same `sensor_readings` row. If ML fails or artifacts are missing, the reading is stored with NULL ML fields — **no fabricated predictions**.
 - **Role-based access control** — JWT authentication (Argon2 password hashing) with two roles: `AUTHORITY` and `PRODUCT_USER`. ML analysis endpoints are authority-only; public endpoints expose no model internals.
-- **Live four-sensor assessment** — Live Monitoring reads the real ESP32/MQTT window, waits for **10 valid samples over 20 s**, checks stability per parameter and runs one shared, explainable screening service for Drinking, Domestic Use, Irrigation, Swimming/Recreation or Aquaculture. Stable readings are never treated as calibrated readings.
+- **Live four-sensor assessment** — Live Monitoring reads the real ESP32/MQTT window, waits for **10 valid samples over 20 s**, checks stability per parameter and runs one shared, explainable screening service for Drinking, Domestic Use, Irrigation or General Non-Potable Use. Stable readings are never treated as calibrated readings.
 - **Private product-user tests** — a signed-in product user activates a product code, chooses a water source and intended use, and receives the same screening from their own device's live window (or clearly labelled SIMULATION values). Results are stored per account and are not visible to other users.
 - **Authority dashboard** — command center, live monitoring, water map, station detail with AI analysis, alerts, incidents, inspections, laboratory, and analytics views.
 - **Public transparency pages** — water check, nearby sources, warnings, and QR/scannable source pages with no ML internals exposed.
 - **Explainable AI** — SHAP explanations (global + local) for both tree models, with model-independence verification (predictions bit-identical before/after explanation).
-- **Sensor simulator** — configurable scenarios (`normal`, `deteriorating`, `sudden_event`, `sensor_fault`) publishing to MQTT for end-to-end testing.
+- **Sensor simulator** — configurable scenarios (`normal`, `deteriorating`, `sudden_event`, `sensor_fault`) publishing to MQTT for end-to-end testing, plus an in-app simulation panel (lease-guarded, `source=simulator`) that never mixes with hardware rows.
+- **Incident + laboratory workflow** — raise incidents, move them through a forward-only, audited state machine, notify a laboratory and **email it the generated PDF report** (delivery state reported honestly as `sent` / `smtp_unconfigured` / `failed`), record the verbatim lab result and resolve with a summary.
 
 ---
 
@@ -40,6 +52,46 @@ React frontend (Vite + TypeScript) — public pages, user portal, authority dash
 
 ---
 
+## Quick start (copy-paste)
+
+Prerequisites: **Python 3.11+**, **PostgreSQL 14+**, **Node.js 20.19+** and npm. An MQTT broker is
+optional — it is only needed for real ESP32 telemetry or the CLI simulator; the in-app simulation
+panel and the seeded readings work without one.
+
+```bash
+# 1) database
+createdb hydrasense
+
+# 2) backend
+pip install -r requirements.txt
+cd backend
+cp .env.example .env            # then set DATABASE_URL and JWT_SECRET_KEY (table below)
+python -c "import secrets; print(secrets.token_urlsafe(48))"   # paste as JWT_SECRET_KEY
+alembic upgrade head
+python scripts/seed_demo.py            # authority account + 3 rivers + stations + product codes
+python scripts/seed_ml_readings.py     # optional: a few demo readings so the UI is not empty
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000    # API on :8000, docs at /docs
+# `python run_server.py` starts the same server with --reload
+
+# 3) frontend (second terminal)
+cd frontend
+cp .env.example .env            # VITE_API_BASE_URL=http://127.0.0.1:8000/api
+npm install
+npm run dev                     # http://localhost:5173
+```
+
+Open <http://localhost:5173/public>, click **Authority**, and sign in with the seeded account:
+
+| Seeded account | Credentials |
+|---|---|
+| Authority | `authority@hydrasense.local` / `DemoAuthority123!` |
+| Personal device | printed number `HSD-0001-K7M2Q9` — must be claimed first, see [Accounts](#accounts-sign-in-and-what-to-do-after-login) |
+
+With the backend stopped the SPA still loads, but every API-backed page shows its
+"unable to load" state — start the backend for real data.
+
+---
+
 ## Documentation
 
 Full audit and presentation material lives in [`docs/`](docs/):
@@ -53,6 +105,7 @@ Full audit and presentation material lives in [`docs/`](docs/):
 | [docs/PRESENTATION_DEMO_GUIDE.md](docs/PRESENTATION_DEMO_GUIDE.md) | 10-minute demo script, pre-flight checks, failure fallbacks |
 | [docs/PRESENTATION_QA.md](docs/PRESENTATION_QA.md) | Viva questions with honest technical answers |
 | [docs/PROJECT_AUDIT_REPORT.md](docs/PROJECT_AUDIT_REPORT.md) | Audit findings, limitations and the five most urgent remaining tasks |
+| [docs/PRE_DEPLOYMENT_REPORT.md](docs/PRE_DEPLOYMENT_REPORT.md) | Read-only pre-deployment audit against the spec: per-area verdict, blockers, should-fix, unable-to-verify |
 
 ---
 
@@ -158,7 +211,7 @@ Backend environment variables (`backend/.env`):
 | `MQTT_USE_TLS` / `MQTT_CA_CERT_PATH` | `false` / empty | Enable broker TLS; empty CA path uses the system trust store. TLS is required as soon as the broker is not loopback (the deployment checker fails otherwise). |
 | `MQTT_ALLOW_ANONYMOUS` | `false` | Explicit, development-only opt-in for an anonymous local broker. The production checker always fails it. |
 | `PUBLIC_BASE_URL` | `http://localhost:5173` | Public web origin encoded into printed station QR codes. Must be the real HTTPS origin before QR codes are used. |
-| `DEMO_STRICT_TDS_RULE` | `true` | Enables the project-specific <200 mg/L drinking-water TDS target. Set `false` to disable it; it never affects domestic, irrigation, swimming or aquaculture. |
+| `DEMO_STRICT_TDS_RULE` | `true` | Enables the project-specific <200 mg/L drinking-water TDS target. Set `false` to disable it; it never affects domestic, irrigation or general non-potable use. |
 
 ### 3. MQTT broker
 
@@ -229,6 +282,100 @@ Full wiring, toolchain and safety instructions: **[firmware/README.md](firmware/
 - Firmware publishes every 3 s, waits for NTP time before publishing, and reconnects Wi-Fi/MQTT non-blockingly with backoff (`WIFI_RETRY_MS`, `MQTT_RETRY_MS`).
 - Turbidity is read from ADS1115 A2 through the 10 kΩ/20 kΩ divider, averaged over 10 samples, and published as a **provisional relative index 0–100** (not NTU).
 
+**Registering the hardware to ARK-001 — there is no pairing screen.** A station is identified by the `STATION_CODE`/`DEVICE_ID` it publishes, and the station row must already exist:
+
+1. `ARK-001` is seeded by `python backend/scripts/seed_demo.py`; a fresh database needs that seed (or an equivalent `monitoring_stations` row) before any telemetry is accepted.
+2. In `firmware/hydrasense_esp32/config.h` set `STATION_CODE "ARK-001"` and a unique `DEVICE_ID` (for example `ESP32-HS-001`), then flash. Unknown station codes are rejected; the device id is recorded on every row.
+3. Start the broker and the backend. The firmware publishes to `hydrasense/stations/ARK-001/telemetry` every 3 s.
+4. Verify ingestion: `curl http://127.0.0.1:8000/api/public/stations/ARK-001/readings/latest` must return `"source":"esp32"` and a timestamp seconds old. The Live Monitoring card reads the same stored rows.
+5. The **Connected / Connecting / Offline** badge is derived from the newest stored reading, not from a pairing step: under 30 s = Connected, 30–120 s = Connecting, over 120 s = Offline. A sensor fault reported in `diagnostics` shows **Error** (and the exact device message) even while rows are arriving — the station is online, one probe is not.
+6. A personal account that signs in with a printed `HSD-…` number additionally needs a `product_devices` row carrying that number and `station_code`, claimed with its product code. Without it, device-number login returns 404 even though the station telemetry is flowing.
+
+---
+
+## Accounts, sign-in and what to do after login
+
+HydraSense has three distinct users. Only two of them have accounts.
+
+| Role | How they sign in | Entry point | What they get |
+|---|---|---|---|
+| **Public / citizen** | no account | `/public` | live values, the use-based suitability result, “needs further testing” wording, QR pages — no ML internals |
+| **Authority** | email + password | `/user/login` | monitoring, alerts, forecasts, QR codes, incidents, laboratory contacts and emailed lab reports, PDF reports |
+| **Personal / product user** | device number *(API)* or email + password | `/user/login`, `POST /api/auth/device-login` | own device(s), private water checks, alerts, history, notification preferences |
+
+### Signing in as Authority
+
+1. Start the backend and frontend (see [Quick start](#quick-start-copy-paste)).
+2. Open <http://localhost:5173/public> and click **Authority** — you land on `/user/login`.
+3. Sign in with the seeded account:
+   - email `authority@hydrasense.local`
+   - password `DemoAuthority123!`
+
+   The account is created by `backend/scripts/seed_demo.py`. It exists for local
+demonstration only — rotate or disable it before any deployment.
+4. On success the JWT is stored in `sessionStorage` and you are routed to the authority area.
+   Opening any `/authority/...` URL while signed out redirects back to `/user/login`.
+
+**What to do after logging in — a 5-minute tour**
+
+| Step | Page | What to do / what to expect |
+|---|---|---|
+| 1 | **Command Center** `/authority` | Station cards with the latest readings and alert summary. Empty cards mean no readings yet — run the in-app simulation panel (step 7) or publish MQTT telemetry. |
+| 2 | **Live Monitoring** `/authority/monitoring` | Pick a station; the stable-window assessment needs 10 samples over 20 s. Choose Drinking / Domestic / Irrigation / General Non-Potable and read the reasons, references and next steps. |
+| 3 | **Alerts** `/authority/alerts` | Danger-level alerts with the measured value, the configured reference, the reason and the next step. Acknowledgement is local to the browser session. |
+| 4 | **Incidents** `/authority/incidents` | Real incident queue (no mock data). Open an incident → select a laboratory → **Email report to lab**. The PDF report is attached and the delivery state is shown honestly: `Report emailed` / `Email not configured` / `Email failed`. **Download PDF** works even when email is not configured. |
+| 5 | **QR Codes** `/authority/qr` | Per-station public URL plus PNG / SVG / PDF download. Set `PUBLIC_BASE_URL` (backend `.env`) to your LAN or deployed origin before scanning from a phone, otherwise the QR encodes `localhost`. |
+| 6 | **Analytics** `/authority/analytics` | The forecast card (honest readiness/evaluation gate) and the **Model Health & Evaluation** card with the metrics described in [Datasets and metrics](#datasets-and-how-to-check-accuracy-f1-and-other-metrics). |
+| 7 | **Simulation** (floating button, bottom-right on every authority page) | Pick a river and one of the five demo scenarios; generated rows are stored with `source=simulator`, carry the **SIMULATED DATA** label and never trigger real emails or lab messages. |
+
+**Laboratory email requires SMTP.** The incident notification uses the backend SMTP settings; when
+`SMTP_HOST` is empty the workflow still advances but records `smtp_unconfigured` and the UI tells
+you nothing was emailed. Configure these in `backend/.env`:
+
+| Variable | Purpose |
+|---|---|
+| `SMTP_HOST` / `SMTP_PORT` | Mail server (port 587 with STARTTLS is the default) |
+| `SMTP_USER` / `SMTP_PASSWORD` | Credentials; never logged |
+| `SMTP_FROM` | Sender address put on the lab email |
+| `SMTP_USE_TLS` | `true` to call `STARTTLS` (default) |
+
+### Signing in as a Personal (product) user
+
+The normal path is email + password, because a printed device number alone must not create an
+account:
+
+1. `/user/register` — create the account.
+2. `/user/activate` — enter the product code printed on the device. Seeded codes:
+   `HS-KIT-000124` (unclaimed) and `HS-KIT-000125` (bound to device number
+   `HSD-0001-K7M2Q9`, firmware device `ESP32-HS-001` at `ARK-001`).
+3. `/user/dashboard` — the claimed device, alerts and notification preferences.
+4. `/user/check-water` — run a screening; `/user/history` — private past checks.
+
+**Device-number sign-in** is implemented as an API endpoint (the login screen currently offers
+only email + password):
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/api/auth/device-login \
+  -H "Content-Type: application/json" \
+  -d '{"device_number":"HSD-0001-K7M2Q9"}'
+```
+
+The number is case-insensitive. The token is issued to the account the device is **bound** to, so an
+unclaimed device returns a generic `404` — activate it first (steps 1–2). Failures are rate-limited
+per client and share the login budget, and the response never reveals whether a different number
+exists.
+
+### Using the app as the public (no login)
+
+| Page | What it shows |
+|---|---|
+| `/public` | landing page: Scan QR, Check my water |
+| `/public/source/<station_code>` | QR target: live values, turbidity index (never NTU), suitability for drinking / domestic / irrigation |
+| `/public/check-water` | the use-based check with an explicit “needs further testing / insufficient data” state |
+
+Nearby-sources and warnings pages still render demonstration records and are labelled accordingly —
+do not treat them as live feeds.
+
 ---
 
 ## MQTT Telemetry Contract
@@ -264,7 +411,7 @@ ESP32 payload (null = no honest measurement; `source` keeps hardware distinguish
 }
 ```
 
-Simulator payload (NTU-style values, unit stated explicitly, no diagnostics):
+Simulator payload (relative-index values, unit stated explicitly, no diagnostics):
 
 ```json
 {
@@ -272,8 +419,9 @@ Simulator payload (NTU-style values, unit stated explicitly, no diagnostics):
   "device_id": "STATION-ARK-001",
   "timestamp": "2026-10-24T10:00:00+00:00",
   "pH": 7.1,
-  "turbidity": 4.8,
-  "turbidity_unit": "ntu",
+  "turbidity": 22.5,
+  "turbidity_unit": "relative_index_0_100",
+  "turbidity_status": "CLEARER",
   "tds": 210.0,
   "temperature": 26.5
 }
@@ -315,7 +463,7 @@ python ml/scripts/build_evaluation_report.py   # compute real metrics from saved
 
 ### Water Suitability Assessment (BIS IS 10500 / CPCB)
 
-The standards-based assessment lives in `backend/app/services/water_suitability.py` and screens six intended uses: drinking water, domestic use, outdoor bathing, irrigation, industrial cooling and aquatic life. It compares **only** values that are genuinely comparable:
+The standards-based assessment lives in `backend/app/services/water_suitability.py` and screens four intended uses: drinking water, domestic use, irrigation and industrial cooling. It compares **only** values that are genuinely comparable:
 
 - physical hardware readings (`source = esp32`) with `calibration_status = calibrated`;
 - turbidity only when stored as **NTU** (the ESP32 relative index is never compared);
@@ -367,8 +515,6 @@ returns `INCONCLUSIVE`, never a green pass. Demo values are labelled `SIMULATION
 | Domestic Use | The same BIS values, with the strict 200 mg/L demo target deliberately **not** applied. Bathing, washing, cleaning and gardening can have different requirements. |
 | Irrigation | FAO-style TDS salinity categories: <450 mg/L no restriction indicated, 450–2000 slight-to-moderate, >2000 severe; pH reference 6.5–8.4. TDS is a salinity proxy, not electrical conductivity. |
 | General Non-Potable Use | BIS pH 6.5–8.5 as an advisory screening range; TDS and temperature carry **no** pass/fail limit for this use and are shown for context. Outcomes are phrased “Measured indicators are within the configured general (non-potable) screening ranges”, “Caution — further testing or treatment may be needed” or “Unfavourable measured indicators — investigation recommended”. The drinking-only strict TDS target is never applied here. |
-| Swimming / Recreation | pH 6.5–8.5 and calibrated-NTU turbidity where available. Microbiology and site-specific criteria are required, so the best possible state is `REVIEW_RECOMMENDED`. |
-| Aquaculture | The four values are displayed, but without species-specific criteria and measured dissolved oxygen/ammonia/nitrite/salinity the result is `INCONCLUSIVE`. |
 
 Overall states are `WITHIN_PROJECT_TARGETS`, `REVIEW_RECOMMENDED`,
 `NOT_RECOMMENDED_BY_SCREENING` and `INCONCLUSIVE`. Every state carries the exact
@@ -441,7 +587,10 @@ Authority → **Simulation** (`/authority/simulation`) drives
 `POST /api/simulation/start`, `/pause` and `/generate` (plus `GET
 /api/simulation/state`):
 
-- scenarios: `normal`, `gradual_deterioration`, `sudden_change`, `sensor_fault`;
+- scenarios: `normal`, `rain_runoff` (turbidity up), `industrial_discharge` (TDS and pH jump),
+  `sewage_like` (TDS up, pH down), `sensor_fault` (NULL readings), plus the legacy
+  `gradual_deterioration` and `sudden_change` drifts. The floating panel offers the five demo
+  scenarios; the API accepts all seven;
 - optional **seed** for a reproducible sequence (used by the tests);
 - samples cover exactly pH, TDS, temperature and turbidity index, are timestamped
   and linked to the selected river/station, and are stored with
@@ -479,7 +628,7 @@ The user dashboard shows these alerts prominently above the device cards.
 Turbidity alerts always state that the index is not an NTU measurement.
 
 Every number comes from one versioned source: `GET /api/product/alerts/profile`
-returns the active **alert threshold profile** (`alert-thresholds-2026.10.1`)
+returns the active **alert threshold profile** (`alert-thresholds-2026.10.2`)
 from `backend/app/services/alert_thresholds.py`. Each entry carries its value,
 unit, trigger condition, classification — `official_standard` (verified against
 BIS IS 10500:2012 with Amendment 4, citation included) or
@@ -543,6 +692,109 @@ forecasts are model outputs, not measurements. Service:
 
 ---
 
+## Datasets and how to check accuracy, F1 and other metrics
+
+Every number in this section is computed from artifacts in this repository by
+`ml/scripts/build_evaluation_report.py` and written to
+[`ml/reports/evaluation_report.md`](ml/reports/evaluation_report.md) +
+`evaluation_report.json`; the authority API serves the same file. Nothing here is hand-written.
+
+### 1. How many rows are there in total?
+
+| Dataset | Rows | What it actually is | Allowed use |
+|---|---|---|---|
+| `ml/data/external/water_quality_dataset1.csv` | **100,800** (Safe 30,240 / Unsafe 70,560) | External **benchmark**; the Safe/Unsafe label follows that file's own rule (roughly TDS ≲ 210 mg/L and turbidity ≲ 4.5), **not** laboratory potability | Pipeline + method testing and demo **only**. Its accuracy must never be quoted as real-world performance, and suitability is never trained on it |
+| `ml/data/external/usgs_*.csv` (USGS-01649190, Jan–Feb 2024, 5-min) | **40,000** raw rows (pH, turbidity FNU, temperature, conductance — 10,000 each) | Real but **single-station, winter**, no TDS (conductance converted with a documented factor) | Anomaly + forecast method development only |
+| `ml/data/raw/sensor_readings.csv` | **9** | Real device log, far too small | Replace with a calibrated multi-day log before drawing conclusions |
+| **Total cleaned input** | **140,809** rows across 6 files, **0 removed** ([cleaning report](ml/reports/dataset_cleaning_report.md)) | | |
+
+Derived splits used by the models:
+
+| Artifact | Rows | Used by |
+|---|---|---|
+| `supervised_train.csv` / `_validation.csv` / `_test.csv` | 70,560 / 15,120 / 15,120 | Random Forest (stratified 70/15/15, `random_state=42`) |
+| `forecast_train.csv` / `_validation.csv` / `_test.csv` | 5,321 / 1,140 / 1,139 | XGBoost deterioration analysis (chronological, single station) |
+| `usgs_timeseries_combined.csv` | 7,601 | Synchronised USGS sensor series |
+
+### 2. The measured metrics
+
+Random Forest — Safe/Unsafe classification (held-out test split, **live in the backend**):
+
+| Metric | Value |
+|---|---|
+| Test samples | 15,120 |
+| Accuracy | **0.9999** |
+| Balanced accuracy | 0.9998 |
+| Macro precision / recall / F1 | 0.9998 / 0.9998 / **0.9998** |
+| Weighted F1 | 0.9999 |
+| ROC-AUC (Unsafe) | 1.0000 |
+
+| Class | Precision | Recall | F1 | Support |
+|---|---|---|---|---|
+| Safe | 0.9998 | 0.9998 | 0.9998 | 4,536 |
+| Unsafe | 0.9999 | 0.9999 | 0.9999 | 10,584 |
+
+Confusion matrix (rows = true, columns = `Safe`, `Unsafe`): `[[4535, 1], [1, 10583]]`.
+
+Isolation Forest — anomaly screening (live in the backend): 15,120 readings scored,
+**727 flagged (4.81 %)**, scores −0.1002 … 0.1582 (mean 0.0860). Precision/recall/F1 are
+**not** reported: there are no ground-truth contamination labels, so an anomaly rate would be
+descriptive only.
+
+XGBoost — deterioration prediction (offline only): 1,139 test rows, accuracy 0.9438 but
+balanced accuracy **0.5376**, macro F1 **0.5284**, ROC-AUC 0.6288, and on the minority `Unsafe`
+class precision 0.0698 / recall 0.1111 / F1 0.0857 (27 samples). The high raw accuracy is an
+imbalance artefact — this model is deliberately **not** wired to live inference.
+
+Forecast model (live, authority-only): evaluated per parameter on a chronological holdout against
+a **persistence baseline**; MAE and RMSE for both are returned, and forecast points are withheld
+when the model does not strictly beat persistence (`model_not_better_than_baseline`). Populate a
+station with enough history (≥ 96 samples over ≥ 7 days) before expecting points.
+
+### 3. What the metrics mean here
+
+- **Accuracy** — share of correct predictions. With a 70/30 class split, always guessing `Unsafe`
+  already scores ≈ 0.70, so it is never reported alone.
+- **Balanced accuracy** — mean of the per-class recalls; the first honest signal that a model is
+  useful on the minority class.
+- **Precision** — of the rows flagged `Unsafe`, how many were truly `Unsafe`.
+- **Recall** — of the truly `Unsafe` rows, how many were caught.
+- **F1** — harmonic mean of precision and recall; **macro** F1 averages both classes equally,
+  **weighted** F1 weights by class size (and is therefore flattered by the majority class).
+- **ROC-AUC** — ranking quality independent of a threshold.
+- **Anomaly model** — no labels exist, so only the flag rate and score range are reported; an
+  anomaly is an unusual sensor pattern, never confirmed pollution.
+
+### 4. Reproduce / check them yourself
+
+```bash
+# rebuild the full report from the saved artifacts (writes ml/reports/evaluation_report.{md,json})
+python ml/scripts/build_evaluation_report.py
+
+# per-model views
+python ml/scripts/evaluate_random_forest.py
+python ml/scripts/evaluate_isolation_forest.py
+python ml/scripts/evaluate_xgboost.py
+
+# dataset audit: row counts, ranges, units, provenance, duplicates
+python ml/scripts/inspect_datasets.py
+python ml/preprocessing/clean_datasets.py     # rewrites ml/reports/dataset_cleaning_report.md
+
+# the same metrics through the API / UI (authority token required)
+curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/api/authority/ml/status
+#   → Authority → Analytics → “Model Health & Evaluation”
+
+# ML test suite (leakage, reproducibility, persistence, SHAP)
+python -m pytest ml/tests -q
+```
+
+Honesty guardrails this project enforces: the benchmark dataset's label is not laboratory
+potability; Random Forest metrics come from a static benchmark split, not these sensors; the
+XGBoost model is offline-only; simulator rows are pipeline tests, not scientific ground truth;
+ESP32 turbidity is a relative index (0–100) and never treated as NTU or fed to ML as NTU.
+
+---
+
 ## Testing
 
 ```bash
@@ -555,7 +807,10 @@ cd backend && python -m pytest tests/test_product_screening.py tests/test_produc
 # Forecasting readiness/evaluation, simulation persistence, alert profile, ML availability
 cd backend && python -m pytest tests/test_forecasting.py tests/test_simulation_and_alerts.py tests/test_ml_availability.py -v
 
-# ML pipeline (140+ tests: leakage, reproducibility, persistence, SHAP)
+# Incident + laboratory workflow (RBAC, status transitions, PDF report, lab email)
+cd backend && python -m pytest tests/test_incidents.py -v
+
+# ML pipeline (leakage, reproducibility, persistence, SHAP)
 python -m pytest ml/tests -v
 
 # Frontend (Vitest + Testing Library)
@@ -566,6 +821,16 @@ cd frontend && npm run build && npm run lint
 ```
 
 The backend suite exercises the real MQTT payload parser and subscriber callbacks (malformed JSON, non-object payloads, missing fields, null sensor values, retry de-duplication, relative-index validation, API responses). No broker, PostgreSQL instance, or physical device is required for it.
+
+Last full run (2026-10-31, this checkout):
+
+| Suite | Command | Result |
+|---|---|---|
+| Backend | `cd backend && python -m pytest -q` | **620 passed**, 4 warnings (≈6 min) |
+| ML | `python -m pytest ml/tests -q` | **140 passed** (≈1 min) |
+| Frontend | `cd frontend && npm test` | **83 passed** in 8 files |
+| Lint | `cd frontend && npm run lint` | **0 errors**, 1 pre-existing warning (`components/ui/button.tsx`) |
+| Build | `cd frontend && npm run build` | **ok** (2,474 modules) |
 
 ---
 
@@ -583,9 +848,14 @@ Base URL: `http://127.0.0.1:8000/api` — interactive docs at [`/docs`](http://1
 | `/api/authority/stations/{code}/readings/latest/analysis` | `AUTHORITY` | latest reading + ML analysis for a station |
 | `/api/authority/ml/status` | `AUTHORITY` | model load state + computed evaluation report |
 | `/api/authority/stations/{code}/suitability` | `AUTHORITY` | BIS/CPCB suitability for the latest reading |
-| `/api/authority/stations/{code}/live-assessment?use=drinking` | `AUTHORITY` | Stable four-sensor assessment for the selected use (`drinking`, `domestic`, `irrigation`, `swimming`, `aquaculture`) |
+| `/api/authority/stations/{code}/live-assessment?use=drinking` | `AUTHORITY` | Stable four-sensor assessment for the selected use (`drinking`, `domestic`, `irrigation`, `general`) |
 | `/api/authority/stations/{code}/forecast?horizon_hours=24` | `AUTHORITY` | Honest baseline forecast — points only when holdout evaluation beats persistence, otherwise `status: unavailable` + reason |
 | `/api/simulation/start|pause|generate|state` | `AUTHORITY` | Persistent three-river simulation controls (PostgreSQL-backed, lease-guarded) |
+| `/api/authority/incidents` | `AUTHORITY` | Incident queue and detail with the audit timeline (`POST`, `GET`, `GET /{id}`) |
+| `/api/authority/incidents/{id}/notify-lab` | `AUTHORITY` | Records the laboratory notification and **emails the PDF report**; response carries `lab_notification_status` (`sent` / `smtp_unconfigured` / `failed`) |
+| `/api/authority/incidents/{id}/report.pdf` | `AUTHORITY` | Download the generated report (works without SMTP) |
+| `/api/authority/incidents/{id}/sample-collected`, `/lab-result`, `/resolve` | `AUTHORITY` | Rest of the forward-only workflow, including verbatim laboratory results |
+| `/api/authority/lab-contacts` | `AUTHORITY` | Laboratories that can receive the report |
 | `/api/product/alerts`, `/api/product/alerts/profile` | `PRODUCT_USER` | Danger-level alerts + the active versioned threshold profile (official vs project-configured) |
 | `/api/product/devices`, `/api/product/activate` | `PRODUCT_USER` | Owned product devices and product-code activation |
 | `POST /api/product/tests` | `PRODUCT_USER` | Run a live (stable window) or explicitly labelled demo test and persist it |
@@ -608,6 +878,8 @@ ML analysis responses contain `anomaly_label` (0 = normal, 1 = anomalous conditi
 | Telemetry accepted but dashboard card says **No data** | No row for that station yet; check the selected station and `authority` login. |
 | Card says **Unauthorized** | Log in with an authority account; raw hardware telemetry is authority-only. |
 | Card says **Stale/Offline** | Last row older than 15 s / 5 min — check device power, Wi-Fi, broker (`mosquitto_sub -h localhost -t "hydrasense/stations/#" -v`). |
+| Station shows **Error** although rows keep arriving | The device reported a probe fault in its diagnostics (for example TDS null because the sensor voltage is near 0 V). The station is online; fix that probe. The message on the card names the sensor and the error. |
+| Device-number login returns 404 | No `product_devices` row is bound to that `HSD-…` number. Station telemetry does not create one: register the device row and claim its product code first. |
 | Serial: `[ADS] ERROR: ADS1115 not found` | I²C wiring/address; analog values publish `null` with a `device.errors` entry instead of fake numbers. |
 | Serial: `[TIME] NTP not synced yet` | Normal for the first seconds after boot; publishing starts once time is valid. |
 | Dashboard shows `(unit unknown)` | Row predates unit tracking; it is intentionally not labelled NTU or relative index. |
@@ -722,7 +994,7 @@ This project deliberately constrains its claims:
 
 - **Turbidity-unvalidated results can no longer read as a full pass.** In the product screening
   engine (`water_screening.py`) any use whose profile rates turbidity (drinking, domestic,
-  swimming, general) now caps its best possible result at `REVIEW_RECOMMENDED` (canonical
+  general) now caps its best possible result at `REVIEW_RECOMMENDED` (canonical
   `caution`) when turbidity is a relative index without NTU calibration or is missing, and the
   assessment carries an explicit warning: *pH and TDS passing their screening rules is reported
   as a caution — not as a full pass*. Regression tests in

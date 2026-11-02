@@ -71,9 +71,6 @@ export default function WarningBanner({ sources }: WarningBannerProps) {
                   <span className="rounded-lg bg-white/80 px-2.5 py-1 font-semibold text-slate-700 border border-slate-200/60">
                     Drinking: <strong className="text-red-600">{source.publicSuitability.drinking}</strong>
                   </span>
-                  <span className="rounded-lg bg-white/80 px-2.5 py-1 font-semibold text-slate-700 border border-slate-200/60">
-                    Recreation: <strong className="text-amber-700">{source.publicSuitability.recreation}</strong>
-                  </span>
                 </div>
               </div>
             </div>

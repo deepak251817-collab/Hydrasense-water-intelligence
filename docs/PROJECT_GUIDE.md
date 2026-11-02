@@ -101,9 +101,10 @@ flowchart LR
     AUTH --> API
 ```
 
-Two ingestion routes write the same table: **simulator** rows (`source='simulator'`, NTU-style
-turbidity) and **hardware** rows (`source='esp32'`, provisional relative turbidity index). The
-`source`, `turbidity_unit`, `diagnostics` columns exist so downstream code can never confuse them.
+Two ingestion routes write the same table: **simulator** rows (`source='simulator'`, relative
+index 0–100) and **hardware** rows (`source='esp32'`, the same provisional relative index). The
+`source`, `turbidity_unit`, `diagnostics` columns exist so downstream code can never confuse them
+or mistake either for NTU.
 
 ---
 
@@ -131,7 +132,7 @@ sequenceDiagram
         M->>DB: INSERT sensor_readings (values may be NULL)
         DB-->>M: reading.id
         M->>S: assess_reading(reading)
-        S-->>M: 6 assessments (drinking, domestic, bathing, irrigation, industrial, aquatic life)
+        S-->>M: 4 assessments (drinking, domestic, irrigation, industrial)
         M->>DB: UPSERT water_suitability_assessments
         alt turbidity unit is relative_index_0_100
             M-->>M: skip ML (the models expect NTU)
@@ -248,8 +249,8 @@ Six tables, seven Alembic migrations:
 | `d4e5f6a7b8c9` | water_suitability_assessments |
 
 The recent migrations are deliberately **non-destructive**: they add nullable columns, backfill
-only what can be derived honestly (`source='simulator'` → `turbidity_unit='ntu'`), and never
-rewrite a measurement.
+only what can be derived honestly (the historical `source='simulator'` → `turbidity_unit='ntu'`
+backfill; the simulator now publishes `relative_index_0_100`), and never rewrite a measurement.
 
 ---
 
@@ -349,16 +350,14 @@ imbalanced real time series looks like, and the report publishes it rather than 
 
 ## 8. Water Suitability Assessment
 
-`backend/app/services/water_suitability.py`, ruleset version **`2026.10.1`**, six use cases:
+`backend/app/services/water_suitability.py`, ruleset version **`2026.10.1`**, four use cases:
 
 | `use_code` | Standard | Criteria used |
 |---|---|---|
 | `drinking` | BIS IS 10500:2012 (Amd. 4) Table 1 | pH 6.5–8.5, TDS 500/2000 mg/L, turbidity 1/5 NTU + 8 required lab parameters reported missing |
 | `domestic` | BIS IS 10500:2012 | same physical criteria, potable-domestic caveat |
-| `bathing` | CPCB DBU Class B | pH, DO, BOD, coliform (unmeasured → reported missing) |
 | `irrigation` | CPCB DBU Class E | pH 6.0–8.5, EC ≤ 2250 µS/cm, SAR, boron |
 | `industrial` | CPCB DBU Class E | cooling/industrial criteria |
-| `aquatic_life` | CPCB DBU Class D | pH, DO, free ammonia |
 
 Guard rails, all enforced in code:
 

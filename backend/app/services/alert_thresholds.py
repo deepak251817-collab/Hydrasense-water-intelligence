@@ -25,7 +25,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Tuple
 
-PROFILE_VERSION = "alert-thresholds-2026.10.1"
+PROFILE_VERSION = "alert-thresholds-2026.10.2"
 PROFILE_NAME = "HydraSense alert screening profile"
 
 OFFICIAL = "official_standard"
@@ -180,12 +180,13 @@ THRESHOLDS: Tuple[Threshold, ...] = (
         source="ESP32 firmware band documentation + project configuration",
         rationale=(
             "Relative index ≥ 55 sits in the firmware's CLOUDIER band "
-            "(CLEARER < 30, MODERATE 30–54, CLOUDIER ≥ 55; higher = cloudier). "
+            "(CLEARER < 30, MODERATE 30–54, CLOUDIER ≥ 55; higher = cloudier) "
+            "and ≥ 85 is the configured critical level for a very cloudier sample. "
             "Index points only — never compared with the 1 NTU / 5 NTU limits, "
             "because the analog sensor does not measure NTU."
         ),
         warning=(Condition("gte", 55.0),),
-        critical=(Condition("gte", 80.0),),
+        critical=(Condition("gte", 85.0),),
     ),
     Threshold(
         key="temperature_unusual",

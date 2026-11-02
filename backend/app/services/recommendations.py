@@ -42,9 +42,7 @@ USES: Tuple[str, ...] = (
     "drinking",
     "domestic",
     "irrigation",
-    "swimming",
     "general",
-    "aquaculture",
 )
 PARAMETERS: Tuple[str, ...] = ("ph", "tds", "turbidity", "data_quality")
 DIRECTIONS: Tuple[str, ...] = (
@@ -124,20 +122,11 @@ MISSING_ASSESSMENTS: Dict[str, List[str]] = {
         "electrical conductivity and sodium adsorption ratio in particular "
         "are required for a validated irrigation assessment.",
     ],
-    "swimming": [
-        "Microbiological indicators required for recreational-water assessment "
-        "are not measured by these sensors.",
-    ],
     "general": [
         "This screening covers the four measured indicators only; any other "
         "water-quality parameter is not measured by these sensors, so keep "
         "the water away from drinking or cooking uses until separately "
         "assessed.",
-    ],
-    "aquaculture": [
-        "Dissolved oxygen, ammonia, nitrite, salinity and species-specific "
-        "criteria are not measured by these sensors, so no aquaculture "
-        "suitability verdict can be produced from them.",
     ],
 }
 

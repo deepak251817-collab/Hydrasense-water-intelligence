@@ -30,6 +30,9 @@ function errorDetail(err: unknown): string {
 
 const SCENARIOS: { code: SimulationScenario; label: string; hint: string }[] = [
   { code: "normal", label: "Normal", hint: "Realistic variation around the river baseline" },
+  { code: "rain_runoff", label: "Rain Runoff", hint: "First-flush runoff: turbidity index climbs into the CLOUDIER band" },
+  { code: "industrial_discharge", label: "Industrial Discharge", hint: "Alkaline pH and a large TDS jump" },
+  { code: "sewage_like", label: "Sewage-like", hint: "TDS rises while pH falls into the acidic band" },
   { code: "gradual_deterioration", label: "Gradual Deterioration", hint: "Steady drift to cloudier, higher-TDS water" },
   { code: "sudden_change", label: "Sudden Change", hint: "Stable, then an abrupt step change" },
   { code: "sensor_fault", label: "Sensor Fault", hint: "A sensor stops reporting (stored as NULL)" },

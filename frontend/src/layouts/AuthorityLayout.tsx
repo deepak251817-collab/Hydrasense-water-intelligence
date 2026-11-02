@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Outlet } from "react-router-dom";
 import AuthoritySidebar from "../components/authority/AuthoritySidebar";
 import AuthorityTopbar from "../components/authority/AuthorityTopbar";
+import SimulationDock from "../components/authority/SimulationDock";
 
 export default function AuthorityLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -23,6 +24,9 @@ export default function AuthorityLayout() {
           </div>
         </main>
       </div>
+
+      {/* Authority-only floating simulation controls (bottom-right). */}
+      <SimulationDock />
     </div>
   );
 }

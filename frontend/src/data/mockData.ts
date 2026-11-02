@@ -50,8 +50,6 @@ export interface WaterSource {
     drinking: "Not Recommended" | "Caution" | "Permissible with Treatment";
     domestic: "Safe" | "Caution" | "Restricted";
     irrigation: "Safe" | "Caution" | "Restricted";
-    recreation: "Safe" | "Caution" | "Restricted";
-    aquaculture: "Safe" | "Caution" | "Restricted";
   };
   aiInsight?: string;
 }
@@ -80,7 +78,7 @@ export interface SensorProbe {
 }
 
 export interface WaterUseCategory {
-  id: "drinking" | "domestic" | "irrigation" | "recreation" | "aquaculture";
+  id: "drinking" | "domestic" | "irrigation";
   title: string;
   icon: string;
   shortDescription: string;
@@ -110,21 +108,6 @@ export const waterUseOptions: WaterUseCategory[] = [
     icon: "Sprout",
     shortDescription: "Agricultural crops, home gardens, and community landscaping.",
     safetyThresholds: "FAO TDS categories (<450 / 450–2000 / >2000 mg/L), pH 6.5–8.4 reference",
-  },
-  {
-    id: "recreation",
-    title: "Swimming / Recreation",
-    icon: "Waves",
-    shortDescription: "Direct skin contact sports, swimming, and boating.",
-    safetyThresholds:
-      "pH and turbidity concerns flagged; microbiological testing is required — no suitability claim",
-  },
-  {
-    id: "aquaculture",
-    title: "Aquaculture",
-    icon: "Fish",
-    shortDescription: "Fish farming, aquatic breeding, and biodiversity conservation.",
-    safetyThresholds: "Insufficient parameters (no dissolved oxygen / ammonia / salinity sensors)",
   },
 ];
 
@@ -157,8 +140,6 @@ export const mockWaterSources: WaterSource[] = [
       drinking: "Not Recommended",
       domestic: "Caution",
       irrigation: "Safe",
-      recreation: "Caution",
-      aquaculture: "Caution",
     },
     historicalTrend: [
       { time: "06:00", pH: 7.3, turbidity: 26, tds: 310, healthScore: 80 },
@@ -192,8 +173,6 @@ export const mockWaterSources: WaterSource[] = [
       drinking: "Caution",
       domestic: "Safe",
       irrigation: "Safe",
-      recreation: "Safe",
-      aquaculture: "Safe",
     },
     historicalTrend: [
       { time: "06:00", pH: 7.4, turbidity: 14, tds: 268, healthScore: 92 },
@@ -228,8 +207,6 @@ export const mockWaterSources: WaterSource[] = [
       drinking: "Not Recommended",
       domestic: "Restricted",
       irrigation: "Restricted",
-      recreation: "Restricted",
-      aquaculture: "Restricted",
     },
     historicalTrend: [
       { time: "06:00", pH: 6.9, turbidity: 52, tds: 640, healthScore: 52 },

@@ -279,7 +279,11 @@ def _transition(
 
 
 def _compose_report_email(
-    contact: LabContact, incident: Incident, station: MonitoringStation, pdf: bytes
+    contact: LabContact,
+    incident: Incident,
+    station: MonitoringStation,
+    pdf: bytes,
+    note: Optional[str] = None,
 ) -> EmailMessage:
     message = EmailMessage()
     message["Subject"] = (
@@ -288,30 +292,35 @@ def _compose_report_email(
     )
     message["From"] = settings.SMTP_FROM
     message["To"] = contact.email
-    message.set_content(
-        "\n".join(
+    lines = [
+        f"Dear {contact.name},",
+        "",
+        "A water-quality incident has been raised and this laboratory is "
+        "requested to perform confirmatory analysis.",
+        "",
+        f"Incident: {incident.reference or incident.id}",
+        f"Station: {station.station_code} — {station.station_name}",
+        f"Priority: {incident.priority}",
+        f"Sample reference: {incident.sample_id or 'not yet collected'}",
+        "",
+        "The attached PDF contains the stored sensor readings, the alert "
+        "reason and the current workflow timeline. The four hardware "
+        "sensors measure pH, TDS, temperature and a relative turbidity "
+        "index only; nothing in the report is a laboratory measurement.",
+        "",
+        "This is a preliminary screening report, not a safety certification.",
+        "",
+    ]
+    if note and note.strip():
+        lines.extend(
             [
-                f"Dear {contact.name},",
+                "Message from the reporting authority:",
+                note.strip(),
                 "",
-                "A water-quality incident has been raised and this laboratory is "
-                "requested to perform confirmatory analysis.",
-                "",
-                f"Incident: {incident.reference or incident.id}",
-                f"Station: {station.station_code} — {station.station_name}",
-                f"Priority: {incident.priority}",
-                f"Sample reference: {incident.sample_id or 'not yet collected'}",
-                "",
-                "The attached PDF contains the stored sensor readings, the alert "
-                "reason and the current workflow timeline. The four hardware "
-                "sensors measure pH, TDS, temperature and a relative turbidity "
-                "index only; nothing in the report is a laboratory measurement.",
-                "",
-                "This is a preliminary screening report, not a safety certification.",
-                "",
-                "HydraSense",
             ]
         )
-    )
+    lines.append("HydraSense")
+    message.set_content("\n".join(lines))
     message.add_attachment(
         pdf, maintype="application", subtype="pdf",
         filename=f"{incident.reference or 'incident'}-report.pdf",
@@ -320,7 +329,11 @@ def _compose_report_email(
 
 
 def _deliver_report_email(
-    contact: LabContact, incident: Incident, station: MonitoringStation, pdf: bytes
+    contact: LabContact,
+    incident: Incident,
+    station: MonitoringStation,
+    pdf: bytes,
+    note: Optional[str] = None,
 ) -> str:
     """Return the honest delivery outcome; never raise into the workflow."""
 
@@ -332,7 +345,9 @@ def _deliver_report_email(
                 server.starttls()
             if settings.SMTP_USER:
                 server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
-            server.send_message(_compose_report_email(contact, incident, station, pdf))
+            server.send_message(
+                _compose_report_email(contact, incident, station, pdf, note=note)
+            )
         return "sent"
     except Exception as exc:  # noqa: BLE001 - delivery must never break the workflow
         logger.warning("Lab notification email failed: %s", type(exc).__name__)
@@ -359,7 +374,9 @@ def notify_lab(
 
     now = datetime.now(timezone.utc)
     pdf = build_incident_report_pdf(db, incident)
-    outcome = _deliver_report_email(contact, incident, station, pdf)
+    outcome = _deliver_report_email(
+        contact, incident, station, pdf, note=payload.note
+    )
 
     incident.lab_contact_id = contact.id
     incident.lab_notification_status = outcome
@@ -377,10 +394,24 @@ def notify_lab(
             "Email is not configured on this server; deliver the generated "
             "report manually."
         )
-    _transition(
-        db, incident, actor, "lab_notified",
-        note=" ".join(notes), at=now,
-    )
+    if incident.status == "raised":
+        _transition(
+            db, incident, actor, "lab_notified",
+            note=" ".join(notes), at=now,
+        )
+    else:
+        # Already lab_notified: this is a re-send (typically after a failed
+        # delivery). Keep the status and log the attempt in the audit trail.
+        db.add(
+            IncidentEvent(
+                incident_id=incident.id,
+                from_status="lab_notified",
+                to_status="lab_notified",
+                note="Re-notification: " + " ".join(notes),
+                actor_id=actor.id,
+                created_at=now,
+            )
+        )
     db.commit()
     db.refresh(incident)
     return outcome

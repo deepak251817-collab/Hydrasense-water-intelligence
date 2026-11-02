@@ -290,14 +290,8 @@ def test_purposes_apply_their_own_profiles():
     assert general["readings"]["tds"]["status"] == "informational"
 
 
-def test_swimming_and_aquaculture_never_certify_suitability():
-    assert state_of(evaluate(intended_use="swimming")) == CAUTION
-    assert state_of(evaluate(intended_use="aquaculture")) == INSUFFICIENT
-
-
 def test_every_supported_purpose_returns_a_canonical_state():
-    for use in ("drinking", "domestic", "irrigation", "general",
-                "swimming", "aquaculture"):
+    for use in ("drinking", "domestic", "irrigation", "general"):
         result = evaluate(intended_use=use)
         assert state_of(result) in STATE_LABELS
 

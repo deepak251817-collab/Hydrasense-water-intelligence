@@ -149,6 +149,23 @@ def pause_simulation(
     return simulation_service.state_payload(db)
 
 
+@router.post("/reset", response_model=SimulationStateResponse)
+def reset_simulation(
+    current_user: User = Depends(get_current_authority),
+    db: Session = Depends(get_db),
+):
+    """Pause the run and clear its station, scenario, seed and counters.
+
+    Already-generated samples remain in ``sensor_readings`` (labelled
+    ``source = "simulator"``); Reset never deletes measurements and never
+    touches hardware telemetry.
+    """
+
+    simulation_service.reset(db)
+    logger.info("Simulation reset")
+    return simulation_service.state_payload(db)
+
+
 @router.post("/generate", response_model=SimulationStateResponse)
 def generate_samples(
     payload: SimulationGenerateRequest,

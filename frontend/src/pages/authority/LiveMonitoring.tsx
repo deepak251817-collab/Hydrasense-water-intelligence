@@ -47,8 +47,6 @@ const USES: { code: IntendedUseCode; label: string }[] = [
   { code: "domestic", label: "Domestic Use" },
   { code: "irrigation", label: "Irrigation" },
   { code: "general", label: "General Non-Potable Use" },
-  { code: "swimming", label: "Swimming / Recreation" },
-  { code: "aquaculture", label: "Aquaculture" },
 ];
 
 const PARAMETER_ICONS: Record<string, typeof Droplets> = {
@@ -608,7 +606,6 @@ function StationHistory({ stationCode }: { stationCode: string | null }) {
 
 function LiveMonitoringPanel({ station }: { station: MonitoringStation }) {
   const [use, setUse] = useState<IntendedUseCode>("drinking");
-  const [aquacultureContext, setAquacultureContext] = useState("");
   const [data, setData] = useState<LiveAssessmentResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -626,8 +623,7 @@ function LiveMonitoringPanel({ station }: { station: MonitoringStation }) {
       const result = await authorityApi.getLiveAssessment(
         station.station_code,
         token,
-        use,
-        use === "aquaculture" && aquacultureContext ? aquacultureContext : undefined
+        use
       );
       setData(result);
       setError(null);
@@ -646,7 +642,7 @@ function LiveMonitoringPanel({ station }: { station: MonitoringStation }) {
     } finally {
       setRefreshing(false);
     }
-  }, [station.station_code, use, aquacultureContext]);
+  }, [station.station_code, use]);
 
   useEffect(() => {
     const initial = window.setTimeout(load, 0);
@@ -815,22 +811,6 @@ function LiveMonitoringPanel({ station }: { station: MonitoringStation }) {
                 </button>
               ))}
             </div>
-            {use === "aquaculture" && (
-              <label className="mt-3 block text-xs font-semibold text-slate-600">
-                Species / farming context (optional)
-                <input
-                  type="text"
-                  value={aquacultureContext}
-                  onChange={(event) => setAquacultureContext(event.target.value)}
-                  placeholder="e.g. tilapia nursery pond"
-                  maxLength={200}
-                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal text-slate-800 focus:border-cyan-500 focus:outline-none"
-                />
-                <span className="mt-1 block text-[10px] font-normal text-slate-400">
-                  No species-specific criteria are configured; this context is recorded with the assessment only.
-                </span>
-              </label>
-            )}
           </section>
 
           {refreshing && !data ? (

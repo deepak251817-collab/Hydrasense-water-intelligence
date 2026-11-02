@@ -104,8 +104,8 @@ python backend/simulator/sensor_simulator.py --scenario sudden_event --interval 
 Expected backend log:
 
 ```
-Ingested SensorReading id=... for station='ARK-001' source='simulator' (pH=..., turbidity=..., unit=ntu, ...)
-Suitability assessments stored for SensorReading id=... (6 uses)
+Ingested SensorReading id=... for station='ARK-001' source='simulator' (pH=..., turbidity=..., unit=relative_index_0_100, ...)
+Suitability assessments stored for SensorReading id=... (4 uses)
 ML results stored for SensorReading id=...
 ```
 

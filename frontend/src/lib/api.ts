@@ -160,9 +160,7 @@ export type IntendedUseCode =
   | "drinking"
   | "domestic"
   | "irrigation"
-  | "general"
-  | "swimming"
-  | "aquaculture";
+  | "general";
 
 export type ReadingMode = "live" | "demo";
 
@@ -448,9 +446,12 @@ export interface ProductAlertList {
 
 export type SimulationScenario =
   | "normal"
+  | "rain_runoff"
+  | "industrial_discharge"
+  | "sewage_like"
+  | "sensor_fault"
   | "gradual_deterioration"
-  | "sudden_change"
-  | "sensor_fault";
+  | "sudden_change";
 
 export interface SimulationSample {
   id: number;
@@ -483,6 +484,7 @@ export interface SimulationState {
   simulated: true;
   label: string;
   scenarios: string[];
+  scenario_labels?: Record<string, string>;
   recent_samples: SimulationSample[];
 }
 
@@ -987,7 +989,6 @@ export const productApi = {
       water_source: WaterSourceCode;
       intended_use: IntendedUseCode;
       reading_mode: ReadingMode;
-      aquaculture_context?: string;
     },
     token: string
   ) => apiPostAuth<ProductWaterTest>("/product/tests", data, token),
@@ -1037,6 +1038,9 @@ export const simulationApi = {
 
   pause: (token: string) =>
     apiPostAuth<SimulationState>("/simulation/pause", {}, token),
+
+  reset: (token: string) =>
+    apiPostAuth<SimulationState>("/simulation/reset", {}, token),
 
   generate: (
     data: {
@@ -1209,11 +1213,9 @@ export const authorityApi = {
   getLiveAssessment: (
     stationCode: string,
     token: string,
-    use: IntendedUseCode = "drinking",
-    aquacultureContext?: string
+    use: IntendedUseCode = "drinking"
   ) => {
     const params = new URLSearchParams({ use });
-    if (aquacultureContext) params.set("aquaculture_context", aquacultureContext);
     return apiGetAuth<LiveAssessmentResponse>(
       `/authority/stations/${stationCode}/live-assessment?${params.toString()}`,
       token
@@ -1248,3 +1250,105 @@ export function hasMLAnalysis(ml: MLAnalysis | null | undefined): boolean {
     ml.unsafe_probability !== null
   );
 }
+
+// ============= Authority incidents & lab notification =============
+
+/** A laboratory that can receive the incident report by email. */
+export interface LabContact {
+  id: number;
+  name: string;
+  organization: string;
+  email: string;
+  phone: string | null;
+  address: string | null;
+  accreditation: string | null;
+  is_active: boolean;
+  created_at: string;
+}
+
+/**
+ * Honest delivery state of the lab notification email:
+ * `sent` — handed to the SMTP server,
+ * `smtp_unconfigured` — no SMTP_HOST, nothing left the server,
+ * `failed` — the attempt was made and did not arrive,
+ * `not_notified` — never attempted.
+ */
+export type LabNotificationStatus =
+  | "not_notified"
+  | "sent"
+  | "smtp_unconfigured"
+  | "failed";
+
+export interface IncidentEvent {
+  id: number;
+  from_status: string | null;
+  to_status: string;
+  note: string | null;
+  actor_id: number | null;
+  created_at: string;
+}
+
+export interface IncidentListItem {
+  id: number;
+  reference: string | null;
+  station_code: string;
+  station_name: string;
+  title: string;
+  priority: string;
+  status: string;
+  origin: string;
+  is_demo: boolean;
+  raised_at: string;
+  lab_notification_status: LabNotificationStatus;
+}
+
+export interface IncidentDetail extends IncidentListItem {
+  summary: string;
+  alert_reason: string | null;
+  explanation: string | null;
+  explanation_source: string;
+  lab_contact: LabContact | null;
+  lab_notified_at: string | null;
+  sample_id: string | null;
+  resolved_at: string | null;
+  resolution_summary: string | null;
+  allowed_transitions: string[];
+  events: IncidentEvent[];
+}
+
+export interface NotifyLabPayload {
+  lab_contact_id: number;
+  note?: string;
+}
+
+export const incidentsApi = {
+  /** Incident queue (authority-only). */
+  list: (token: string, statusFilter?: string) => {
+    const query = statusFilter ? `?status=${encodeURIComponent(statusFilter)}` : "";
+    return apiGetAuth<IncidentListItem[]>(`/authority/incidents${query}`, token);
+  },
+
+  /** Full incident record: timeline, readings, lab results, transitions. */
+  get: (incidentId: number, token: string) =>
+    apiGetAuth<IncidentDetail>(`/authority/incidents/${incidentId}`, token),
+
+  /** Laboratories that can be notified. */
+  listLabContacts: (token: string) =>
+    apiGetAuth<LabContact[]>("/authority/lab-contacts", token),
+
+  /**
+   * Notify the lab and email it the PDF report. The response carries the
+   * delivery outcome in `lab_notification_status` — always trust that over
+   * any assumption that mail left the server.
+   */
+  notifyLab: (incidentId: number, payload: NotifyLabPayload, token: string) =>
+    apiPostAuth<IncidentDetail>(
+      `/authority/incidents/${incidentId}/notify-lab`,
+      payload,
+      token
+    ),
+
+  /** Download the generated PDF (used when SMTP is not configured). */
+  downloadReport: (incidentId: number, token: string) =>
+    fetchBlobAuth(`/authority/incidents/${incidentId}/report.pdf`, token),
+};

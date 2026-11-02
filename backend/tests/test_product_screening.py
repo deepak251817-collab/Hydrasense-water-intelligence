@@ -161,7 +161,7 @@ def test_above_2000_message_is_exact():
 # The strict rule is drinking-only; domestic/irrigation keep their own logic
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("use", ["domestic", "irrigation", "swimming", "aquaculture"])
+@pytest.mark.parametrize("use", ["domestic", "irrigation", "general"])
 def test_strict_tds_rule_does_not_apply_to_other_uses(use):
     result = run(tds=150, use=use)
     assert status(result, "tds") != "below_project_target"
@@ -254,6 +254,13 @@ def test_relative_index_is_never_compared_with_ntu():
     assert turbidity["status"] == "not_comparable"
     assert "not NTU" in turbidity["unit"]
     assert "not compared" in turbidity["note"]
+    # The verdict must point at a laboratory test instead of an NTU limit.
+    assert "cannot be" in turbidity["note"] and "NTU limits" in turbidity["note"]
+    assert "laboratory test" in turbidity["note"]
+    # The NTU numbers must never appear as this row's own limits.
+    for limit in ("1 NTU", "5 NTU"):
+        if limit in turbidity["note"]:
+            assert "not compared with the 1 NTU" in turbidity["note"]
 
 
 def test_relative_index_does_not_create_a_green_pass():
@@ -414,34 +421,8 @@ def test_domestic_is_not_universal_suitability():
     assert "different requirements" in result["overall"]["summary"]
 
 
-def test_swimming_requires_review_and_microbiology():
-    result = run(use="swimming")
-    assert result["overall"]["status"] == "REVIEW_RECOMMENDED"
-    assert "cannot be certified" in result["overall"]["summary"]
-    assert any(item["parameter"] == "total_coliform"
-               for item in result["suitability"]["criteria"])
-
-
-def test_swimming_flags_pH_concern():
-    result = run(use="swimming", ph=9.0)
-    assert result["overall"]["status"] == "NOT_RECOMMENDED_BY_SCREENING"
-    assert "pH" in result["overall"]["summary"]
-
-
-def test_aquaculture_is_insufficient_and_exact():
-    result = run(use="aquaculture")
-    assert result["overall"]["status"] == "INCONCLUSIVE"
-    assert result["overall"]["label"].startswith("Inconclusive")
-    assert result["suitability"]["result_label"] == (
-        "Insufficient parameters for a reliable aquaculture suitability assessment"
-    )
-    assert "Insufficient parameters for a reliable aquaculture suitability assessment" in (
-        result["overall"]["summary"]
-    )
-
-
 def test_all_uses_return_a_status_and_reasons():
-    for use in ("drinking", "domestic", "irrigation", "swimming", "aquaculture"):
+    for use in ("drinking", "domestic", "irrigation", "general"):
         result = run(use=use, tds=320, ph=7.2)
         assert result["overall"]["status"] in {
             "WITHIN_PROJECT_TARGETS", "REVIEW_RECOMMENDED",

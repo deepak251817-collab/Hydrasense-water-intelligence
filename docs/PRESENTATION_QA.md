@@ -11,7 +11,7 @@
 **1. What problem does HydraSense solve?**
 
 It turns cheap IoT water sensors into an auditable water-quality signal: ingest validated telemetry
-from ESP32 stations, store it with provenance, screen it against BIS/CPCB standards for six intended
+from ESP32 stations, store it with provenance, screen it against BIS/CPCB standards for four intended
 uses, flag unusual patterns with an ML model, and publish a QR-linked public page so citizens can see
 the same data. It explicitly separates *what was measured* from *what was inferred*.
 
@@ -236,8 +236,8 @@ labels its SHAP area a placeholder.
 **32. Which standards did you implement?**
 
 BIS IS 10500:2012 (Amendment 4) Table 1 for drinking/domestic (pH 6.5–8.5, TDS 500/2000 mg/L,
-turbidity 1/5 NTU) and CPCB Designated Best Use classes for bathing (Class B), aquatic life (Class D)
-and irrigation/industrial (Class E). Ruleset version `2026.10.1`.
+turbidity 1/5 NTU) and CPCB Designated Best Use Class E for irrigation/industrial. Ruleset
+version `2026.10.1`.
 
 **33. Why can the system never declare drinking water "safe"?**
 

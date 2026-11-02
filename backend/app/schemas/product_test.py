@@ -8,9 +8,7 @@ from pydantic import BaseModel, Field, field_validator
 from app.schemas.recommendations import RecommendationSet
 
 WaterSourceCode = Literal["tap", "borewell", "well", "tank", "surface", "other"]
-IntendedUseCode = Literal[
-    "drinking", "domestic", "irrigation", "general", "swimming", "aquaculture"
-]
+IntendedUseCode = Literal["drinking", "domestic", "irrigation", "general"]
 ReadingMode = Literal["live", "demo"]
 
 
@@ -18,8 +16,6 @@ class ProductWaterTestCreate(BaseModel):
     water_source: WaterSourceCode
     intended_use: IntendedUseCode
     reading_mode: ReadingMode = "live"
-    aquaculture_context: Optional[str] = Field(default=None, max_length=200)
-    aquaculture_context: Optional[str] = Field(default=None, max_length=200)
 
 
 class ActivateProductRequest(BaseModel):

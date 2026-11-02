@@ -23,8 +23,7 @@ Project demo preference (drinking profile only)
 ``DEMO_STRICT_TDS_RULE`` (env var, default enabled) adds a project-specific
 target of 200 mg/L. A value below 200 is flagged as *below the project target*,
 NOT as unsafe drinking water. This preference does not change the official BIS
-limits and is never applied to domestic, irrigation, swimming or aquaculture
-assessments.
+limits and is never applied to domestic or irrigation assessments.
 
 Irrigation uses FAO-style TDS salinity categories (<450 no restriction,
 450–2000 slight-to-moderate, >2000 severe) and a pH reference of 6.5–8.4.
@@ -53,8 +52,6 @@ CRITERIA_VERSION = "live-screening-2026.10.3"
 BIS_CODE = "BIS-IS-10500:2012"
 BIS_NAME = "BIS IS 10500:2012 Drinking Water — Specification (Amd. 4), India"
 IRRIGATION_NAME = "FAO irrigation water salinity categories (TDS proxy) + pH reference 6.5–8.4"
-CPCB_B_NAME = "CPCB Designated Best Use Class B (outdoor bathing), India"
-CPCB_D_NAME = "CPCB Designated Best Use Class D (wildlife & fisheries), India"
 
 FRESH_WITHIN_SECONDS = 300  # backend-wide limit for a saved/live test
 TDS_PLAUSIBLE_MAX = 5000.0
@@ -76,8 +73,6 @@ USE_LABELS = {
     "domestic": "Domestic Use",
     "irrigation": "Irrigation",
     "general": "General Non-Potable Use",
-    "swimming": "Swimming / Recreation",
-    "aquaculture": "Aquaculture",
 }
 
 STATUS_LABELS = {
@@ -124,7 +119,7 @@ _LIMITATION_NOT_CERTIFIED = (
 # reading (relative index without NTU calibration, or no value at all) caps the
 # best possible overall result at REVIEW_RECOMMENDED (canonical `caution`) so
 # that "pH and TDS pass" is never presented as "all requirements passed".
-TURBIDITY_RATED_USES = frozenset({"drinking", "domestic", "swimming", "general"})
+TURBIDITY_RATED_USES = frozenset({"drinking", "domestic", "general"})
 
 
 @dataclass(frozen=True)
@@ -141,10 +136,6 @@ class ScreeningCriteria:
     irrigation_ph_max: float = 8.4
     irrigation_tds_no_restriction_max: float = 450.0
     irrigation_tds_severe_min: float = 2000.0
-    swimming_ph_min: float = 6.5
-    swimming_ph_max: float = 8.5
-    aquaculture_ph_min: float = 6.5
-    aquaculture_ph_max: float = 8.5
     # Project-specific display preference for the Drinking profile only.
     demo_strict_tds_rule: bool = True
     strict_tds_target: float = 200.0
@@ -441,8 +432,10 @@ def _evaluate_turbidity(
         return _entry(
             "turbidity", "Turbidity", turbidity, unit, "not_comparable",
             "No validated NTU calibration available",
-            "Relative turbidity index — not calibrated NTU. It is not compared with "
-            "the 1 NTU or 5 NTU limits and must not be read as NTU.",
+            "Relative turbidity index — not calibrated NTU. Turbidity cannot be "
+            "compared with NTU limits: it is not compared with the 1 NTU or 5 NTU "
+            "limits, so a laboratory test with a calibrated NTU instrument is "
+            "required, and the index must not be read as NTU.",
         )
     if not turbidity_calibrated:
         return _entry(
@@ -535,11 +528,6 @@ def _overall_status(
     if reading_mode == "live" and not calibration_verified:
         return "INCONCLUSIVE"
 
-    if intended_use == "aquaculture":
-        # No species-specific criteria are configured, so a suitability result
-        # cannot be produced from these four readings.
-        return "INCONCLUSIVE"
-
     # An invalid reading of ANY of the four sensors can never ride along with a
     # positive result: implausible pH/TDS/temperature/turbidity collapses the
     # whole assessment to inconclusive.
@@ -585,16 +573,6 @@ def _overall_status(
         # Other required irrigation criteria (EC, SAR, boron) are not measured,
         # so even a favourable TDS/pH result can only recommend review.
         return "REVIEW_RECOMMENDED"
-
-    elif intended_use == "swimming":
-        if (
-            ph["status"] in ("below_reference", "above_reference")
-            or turbidity["status"] in ("above_acceptable", "above_permissible")
-        ):
-            return "NOT_RECOMMENDED_BY_SCREENING"
-        # Microbiology/oxygen demand are not measured; safe swimming cannot be
-        # certified, so the best possible state is review.
-        base = "REVIEW_RECOMMENDED"
 
     elif intended_use == "general":
         # General non-potable use (cleaning, gardening, cooling, construction):
@@ -642,12 +620,6 @@ def _summary(
     concerns = "; ".join(concern_parts)
 
     if status == "INCONCLUSIVE":
-        if intended_use == "aquaculture":
-            return (
-                "Insufficient parameters for a reliable aquaculture suitability "
-                "assessment. Dissolved oxygen, ammonia, nitrite, salinity and "
-                "species-specific criteria are not measured by this hardware."
-            )
         if intended_use == "drinking" and tds["status"] == "below_project_target":
             return (
                 "Not suitable under the project's strict drinking-water TDS target: "
@@ -712,27 +684,6 @@ def _summary(
                ("below_reference", "above_reference") else "")
             + "EC, SAR, chloride and boron are not measured, so this is not an "
               "irrigation suitability certification."
-        )
-
-    if intended_use == "swimming":
-        base = (
-            "Recreational water cannot be certified from pH, TDS, turbidity and "
-            "temperature alone. Microbiological testing and site-specific criteria "
-            "are required."
-        )
-        if status == "NOT_RECOMMENDED_BY_SCREENING":
-            return (
-                "One or more monitored parameters are outside the configured "
-                "swimming/recreation references: " + (concerns or "see parameters") + ". "
-                + base
-            )
-        return "No pH or turbidity concern was detected by this screening. " + base
-
-    if intended_use == "aquaculture":
-        return (
-            "Insufficient parameters for a reliable aquaculture suitability "
-            "assessment. Dissolved oxygen, ammonia, nitrite, salinity and "
-            "species-specific criteria are not measured by this hardware."
         )
 
     if intended_use == "general":
@@ -819,9 +770,7 @@ def _reason_details(
             "drinking": "Review the parameter and obtain laboratory confirmation before relying on the water.",
             "domestic": "Review the parameter before using the water for domestic purposes.",
             "irrigation": "Confirm EC, SAR, chloride and boron before irrigating, and review crop tolerance.",
-            "swimming": "Perform microbiological testing and check site-specific recreational criteria.",
             "general": "Confirm the water's intended non-potable use; treat it separately from any potable use.",
-            "aquaculture": "Measure dissolved oxygen, ammonia, nitrite and salinity, and apply species-specific criteria.",
         }[intended_use]
 
         details.append(
@@ -914,20 +863,10 @@ def _next_steps(
             "Have electrical conductivity (EC), sodium adsorption ratio (SAR), "
             "chloride and boron measured before irrigation decisions."
         )
-    elif intended_use == "swimming":
-        steps.append(
-            "Perform microbiological testing and apply site-specific recreational "
-            "water criteria; these sensors cannot certify safe swimming."
-        )
     elif intended_use == "general":
         steps.append(
             "Use this result for non-potable purposes only; keep the water away "
             "from drinking or cooking uses until separately assessed."
-        )
-    elif intended_use == "aquaculture":
-        steps.append(
-            "Measure dissolved oxygen, ammonia, nitrite, salinity and temperature "
-            "against species-specific criteria before stocking or continuing operation."
         )
     return steps
 
@@ -945,7 +884,6 @@ def _suitability(
     turbidity: Dict[str, Any],
     temperature: Dict[str, Any],
     criteria: ScreeningCriteria,
-    aquaculture_context: Optional[str],
 ) -> Dict[str, Any]:
     limitations: List[str] = [_LIMITATION_NOT_CERTIFIED]
     criteria_items: List[Dict[str, Any]] = [ph, tds, turbidity, temperature]
@@ -996,33 +934,6 @@ def _suitability(
             "Crop and soil tolerance vary; this screening cannot certify irrigation suitability.",
             "The drinking-water <200 mg/L project target is never applied to irrigation.",
         ]
-    elif intended_use == "swimming":
-        standard_code = "CPCB-DBU-B"
-        standard = CPCB_B_NAME
-        description = (
-            "Swimming/recreation screening: pH and turbidity are compared with "
-            "documented references where available. Microbiology is not measured."
-        )
-        criteria_items = [
-            ph,
-            turbidity,
-            _entry(
-                "total_coliform", "Total coliform", None, "MPN/100 mL", "not_measured",
-                "CPCB Class B: total coliform ≤ 500 MPN/100 mL",
-            ),
-            _entry(
-                "dissolved_oxygen", "Dissolved oxygen", None, "mg/L", "not_measured",
-                "CPCB Class B: DO ≥ 5 mg/L",
-            ),
-            tds,
-            temperature,
-        ]
-        limitations = [
-            "These sensors cannot certify safe swimming; microbiological and oxygen-demand "
-            "testing plus site-specific criteria are required.",
-            "No universal TDS or temperature pass/fail limit is applied.",
-            "Visual clarity is not a microbiological indicator.",
-        ]
     elif intended_use == "general":
         standard_code = "PROJECT-GENERAL-NONPOTABLE"
         standard = "Project general (non-potable) screening references"
@@ -1036,32 +947,9 @@ def _suitability(
             _LIMITATION_NOT_CERTIFIED,
             "No TDS pass/fail limit is configured for general non-potable use.",
             "Temperature has no configured pass/fail limit.",
-            "This use is separate from drinking, domestic ingestion, irrigation, "
-            "recreation and aquaculture assessments.",
+            "This use is separate from drinking, domestic ingestion and "
+            "irrigation assessments.",
         ]
-    elif intended_use == "aquaculture":
-        standard_code = "AQUACULTURE-NO-CONFIGURED-CRITERIA"
-        standard = "No species-specific aquaculture criteria configured"
-        description = (
-            "Aquaculture requires species-specific criteria. The four available "
-            "readings are displayed, but they are insufficient for a suitability verdict."
-        )
-        criteria_items = [
-            ph, tds, turbidity, temperature,
-            _entry("dissolved_oxygen", "Dissolved oxygen", None, "mg/L", "not_measured",
-                   "Species-specific aquaculture requirement; not measured by this device."),
-            _entry("ammonia", "Ammonia / ammonium", None, "mg/L", "not_measured",
-                   "Species-specific aquaculture requirement; not measured by this device."),
-            _entry("salinity", "Salinity", None, "ppt", "not_measured",
-                   "Species-specific aquaculture requirement; not measured by this device."),
-        ]
-        limitations = [
-            "Insufficient parameters for a reliable aquaculture suitability assessment.",
-            "Dissolved oxygen, ammonia, nitrite and salinity are not measured by this hardware.",
-            "No species-specific criteria are configured; this screening cannot certify water as safe for fish.",
-        ]
-        if aquaculture_context:
-            limitations.append(f"Species/farming context supplied: {aquaculture_context}.")
     else:  # pragma: no cover - API validates the enum
         standard_code = "UNKNOWN"
         standard = "No reference profile configured"
@@ -1070,9 +958,6 @@ def _suitability(
     result_label = OVERALL_LABELS[status]
     if status == "REVIEW_RECOMMENDED" and intended_use == "irrigation":
         result_label = "Review recommended — other irrigation criteria not measured"
-    if status == "INCONCLUSIVE" and intended_use == "aquaculture":
-        result_label = "Insufficient parameters for a reliable aquaculture suitability assessment"
-
     return {
         "use": intended_use,
         "use_label": USE_LABELS[intended_use],
@@ -1083,13 +968,13 @@ def _suitability(
         "result": status,
         "result_label": result_label,
         "summary": "",
-        "criteria_available": intended_use != "aquaculture",
+        "criteria_available": True,
         "criteria": criteria_items,
         "limitations": limitations,
         "reference_profile": {
             "code": standard_code,
             "name": standard,
-            "jurisdiction": "India" if intended_use != "aquaculture" else "Not configured",
+            "jurisdiction": "India",
         },
     }
 
@@ -1109,7 +994,6 @@ def assess(
     stability: Optional[Mapping[str, Any]] = None,
     now: Optional[datetime] = None,
     criteria: Optional[ScreeningCriteria] = None,
-    aquaculture_context: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Assess four readings for one intended use.
 
@@ -1152,8 +1036,6 @@ def assess(
         "domestic": (criteria.ph_min, criteria.ph_max, BIS_NAME),
         "general": (criteria.ph_min, criteria.ph_max, BIS_NAME),
         "irrigation": (criteria.irrigation_ph_min, criteria.irrigation_ph_max, IRRIGATION_NAME),
-        "swimming": (criteria.swimming_ph_min, criteria.swimming_ph_max, CPCB_B_NAME),
-        "aquaculture": (criteria.aquaculture_ph_min, criteria.aquaculture_ph_max, CPCB_D_NAME),
     }[intended_use]
     ph_eval = _evaluate_ph(ph_value, *ph_range)
 
@@ -1280,7 +1162,6 @@ def assess(
         turbidity=turbidity_eval,
         temperature=temperature_eval,
         criteria=criteria,
-        aquaculture_context=aquaculture_context,
     )
     suitability["summary"] = rating_summary
 

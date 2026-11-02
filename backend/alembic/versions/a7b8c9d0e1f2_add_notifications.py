@@ -43,7 +43,10 @@ def upgrade() -> None:
         sa.Column("user_id", sa.Integer(), sa.ForeignKey("users.id"), nullable=False, index=True),
         sa.Column("category", sa.String(length=50), nullable=False),
         sa.Column("channel", sa.String(length=30), nullable=False),
-        sa.Column("enabled", sa.Boolean(), nullable=False, server_default=sa.text("1")),
+        # PostgreSQL rejects an integer default on a boolean column ("column
+        # enabled is of type boolean but default expression is of type
+        # integer"); use the boolean literal so the migration is portable.
+        sa.Column("enabled", sa.Boolean(), nullable=False, server_default=sa.text("true")),
         sa.UniqueConstraint("user_id", "category", "channel", name="uq_notification_pref"),
     )
 

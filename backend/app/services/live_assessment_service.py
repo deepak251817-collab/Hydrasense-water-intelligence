@@ -92,7 +92,6 @@ def build_live_assessment(
     station: MonitoringStation,
     use: str,
     *,
-    aquaculture_context: Optional[str] = None,
     now: Optional[datetime] = None,
 ) -> Dict[str, Any]:
     now = now or datetime.now(timezone.utc)
@@ -115,7 +114,6 @@ def build_live_assessment(
         calibration=stability.get("calibration") or {},
         stability=stability,
         now=now,
-        aquaculture_context=aquaculture_context,
     )
 
     persisted = _persist(db, station, latest, use, assessment) if latest else None

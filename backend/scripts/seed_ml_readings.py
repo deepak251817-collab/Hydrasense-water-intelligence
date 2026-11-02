@@ -9,6 +9,13 @@ Readings are chosen so the UI verification can exercise:
 - normal readings   -> Safe + normal condition
 - turbidity spike   -> different model outputs, visible in the UI
 - one station left without readings (ARK-003) so the "no data" state is real
+
+Turbidity unit: these rows are NTU-SCALE demonstration inputs for the NTU-
+trained Phase 6 models, so they are stored with ``turbidity_unit = "ntu"``
+(explicitly, never as unknown). They are deliberately NOT converted to the
+relative index: the models must never receive index values, and the station's
+own sensor only ever reports ``relative_index_0_100`` (which is excluded from
+ML inference by design). See docs/TURBIDITY_INDEX_ML.md.
 """
 import os
 import sys
@@ -64,6 +71,7 @@ def main() -> None:
                 timestamp=base + timedelta(minutes=offset),
                 ph=ph,
                 turbidity=turb,
+                turbidity_unit="ntu",
                 tds=tds,
                 temperature=temp,
                 anomaly_label=result.anomaly_label,
@@ -76,7 +84,7 @@ def main() -> None:
             db.add(reading)
             created += 1
             print(
-                f"  [+] {code} ph={ph} turb={turb} tds={tds} temp={temp} -> "
+                f"  [+] {code} ph={ph} turb={turb} NTU tds={tds} temp={temp} -> "
                 f"anomaly={result.anomaly_label} score={result.anomaly_score:.3f} "
                 f"quality={result.water_quality_label} "
                 f"(safe={result.safe_probability:.3f}/unsafe={result.unsafe_probability:.3f})"

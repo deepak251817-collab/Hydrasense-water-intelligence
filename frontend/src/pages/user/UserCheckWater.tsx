@@ -37,8 +37,6 @@ const USES: { code: IntendedUseCode; label: string; hint: string }[] = [
   { code: "domestic", label: "Domestic use", hint: "Bathing, washing, cleaning" },
   { code: "irrigation", label: "Irrigation", hint: "Garden, crops, landscaping" },
   { code: "general", label: "General non-potable", hint: "Cleaning, gardening, cooling" },
-  { code: "swimming", label: "Swimming / recreation", hint: "Pools, bathing, leisure" },
-  { code: "aquaculture", label: "Aquaculture", hint: "Fish and aquatic life" },
 ];
 
 function formatAge(seconds: number | null): string {
@@ -52,7 +50,6 @@ export default function UserCheckWater() {
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [source, setSource] = useState<WaterSourceCode | null>(null);
   const [use, setUse] = useState<IntendedUseCode | null>(null);
-  const [aquacultureContext, setAquacultureContext] = useState("");
   const [device, setDevice] = useState<ProductDeviceStatus | null>(null);
   const [deviceLoading, setDeviceLoading] = useState(false);
   const [deviceError, setDeviceError] = useState<string | null>(null);
@@ -110,10 +107,6 @@ export default function UserCheckWater() {
           water_source: source,
           intended_use: use,
           reading_mode: mode,
-          aquaculture_context:
-            use === "aquaculture" && aquacultureContext.trim()
-              ? aquacultureContext.trim()
-              : undefined,
         },
         token
       );
@@ -230,7 +223,7 @@ export default function UserCheckWater() {
             <h2 className="text-lg font-bold text-slate-900">2. What will the water be used for?</h2>
             <p className="mt-1 text-sm text-slate-500">
               Suitability criteria differ by purpose. Drinking-water thresholds are not
-              reused for irrigation, swimming or aquaculture.
+              reused for irrigation or general non-potable use.
             </p>
             <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
               {USES.map((item) => {
@@ -312,24 +305,6 @@ export default function UserCheckWater() {
                 </button>
               </div>
             </div>
-
-            {use === "aquaculture" && (
-              <label className="block rounded-xl border border-slate-200 p-4 text-xs font-semibold text-slate-600">
-                Species / farming context (optional)
-                <input
-                  type="text"
-                  value={aquacultureContext}
-                  onChange={(event) => setAquacultureContext(event.target.value)}
-                  maxLength={200}
-                  placeholder="e.g. tilapia nursery pond"
-                  className="mt-1.5 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal text-slate-800 focus:border-cyan-500 focus:outline-none"
-                />
-                <span className="mt-1 block text-[10px] font-normal text-slate-400">
-                  No species-specific criteria are configured, so this is recorded with
-                  the test but does not turn four readings into a suitability verdict.
-                </span>
-              </label>
-            )}
 
             {/* Device readiness */}
             <div className="rounded-xl border border-slate-200 p-4">

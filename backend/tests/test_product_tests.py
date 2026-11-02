@@ -470,8 +470,7 @@ def test_demo_test_is_clearly_labelled_and_works_offline(
         ("drinking", "BIS-IS-10500:2012", "REVIEW_RECOMMENDED"),
         ("domestic", "BIS-IS-10500:2012", "REVIEW_RECOMMENDED"),
         ("irrigation", "FAO-TDS-PH", "REVIEW_RECOMMENDED"),
-        ("swimming", "CPCB-DBU-B", "REVIEW_RECOMMENDED"),
-        ("aquaculture", "AQUACULTURE-NO-CONFIGURED-CRITERIA", "INCONCLUSIVE"),
+        ("general", "PROJECT-GENERAL-NONPOTABLE", "REVIEW_RECOMMENDED"),
     ],
 )
 def test_each_intended_use_returns_its_own_criteria(
@@ -487,12 +486,6 @@ def test_each_intended_use_returns_its_own_criteria(
     assert suitability["use"] == use
     assert suitability["standard_code"] == standard
     assert suitability["result"] == result
-    if use == "aquaculture":
-        assert suitability["result_label"] == (
-            "Insufficient parameters for a reliable aquaculture suitability assessment"
-        )
-    if use == "swimming":
-        assert "cannot be certified" in response.json()["assessment"]["overall"]["summary"]
 
 
 def test_test_history_lists_only_the_users_own_tests(

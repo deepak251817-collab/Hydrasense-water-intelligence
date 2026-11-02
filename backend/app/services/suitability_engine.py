@@ -66,7 +66,6 @@ def evaluate(
     stability: Optional[Mapping[str, Any]] = None,
     now: Optional[datetime] = None,
     criteria: Optional[water_screening.ScreeningCriteria] = None,
-    aquaculture_context: Optional[str] = None,
 ) -> dict[str, Any]:
     """Assess exactly the four supported readings for one intended use.
 
@@ -93,7 +92,6 @@ def evaluate(
         stability=stability,
         now=now,
         criteria=criteria,
-        aquaculture_context=aquaculture_context,
     )
 
     # Pin the canonical state and the engine's declared inputs on the result

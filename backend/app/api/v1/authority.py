@@ -219,13 +219,8 @@ def list_station_alerts(
 @router.get("/stations/{station_code}/live-assessment", response_model=LiveAssessmentResponse)
 def get_live_water_assessment(
     station_code: str,
-    use: Literal[
-        "drinking", "domestic", "irrigation", "general", "swimming", "aquaculture"
-    ] = Query(
+    use: Literal["drinking", "domestic", "irrigation", "general"] = Query(
         "drinking", description="Intended use for this assessment"
-    ),
-    aquaculture_context: Optional[str] = Query(
-        None, max_length=200, description="Species/farming context for aquaculture"
     ),
     current_user: User = Depends(get_current_authority),
     db: Session = Depends(get_db),
@@ -247,9 +242,7 @@ def get_live_water_assessment(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Monitoring station with code '{station_code}' not found.",
         )
-    payload = build_live_assessment(
-        db, station, use, aquaculture_context=aquaculture_context
-    )
+    payload = build_live_assessment(db, station, use)
     assessment = payload.get("assessment") or {}
     overall = assessment.get("overall") or {}
     _add_authority_actions(

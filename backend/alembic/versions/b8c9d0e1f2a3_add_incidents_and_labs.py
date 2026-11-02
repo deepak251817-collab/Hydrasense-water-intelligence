@@ -32,7 +32,9 @@ def upgrade() -> None:
         sa.Column("phone", sa.String(length=60), nullable=True),
         sa.Column("address", sa.Text(), nullable=True),
         sa.Column("accreditation", sa.String(length=120), nullable=True),
-        sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.text("1")),
+        # Boolean literal, not integer 1: PostgreSQL rejects integer defaults
+        # on boolean columns.
+        sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.text("true")),
         sa.Column(
             "created_at", sa.DateTime(timezone=True),
             server_default=sa.text("now()"), nullable=False,

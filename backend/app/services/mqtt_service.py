@@ -27,7 +27,8 @@ DIAGNOSTICS_MAX_CHARS = 8192
 
 # ---- Turbidity unit contract -------------------------------------------------
 # ESP32 hardware publishes a PROVISIONAL RELATIVE INDEX 0-100 (higher =
-# cloudier) which is NOT NTU. The simulator publishes NTU-style values. The
+# cloudier) which is NOT NTU, and the Python simulator publishes that same
+# index. The
 # unit travels either as a top-level `turbidity_unit` field or inside
 # `diagnostics.turbidity.unit` (current firmware). Rows with no unit are
 # stored with turbidity_unit=NULL (unknown) — never silently treated as NTU
@@ -144,11 +145,10 @@ def validate_telemetry_payload(data: Dict[str, Any]) -> Tuple[bool, str]:
     if turbidity_error:
         return False, turbidity_error
 
-    # NOTE on `turbidity`: simulator payloads carry NTU-like values; ESP32
-    # hardware payloads carry a PROVISIONAL RELATIVE INDEX 0-100 (higher =
-    # cloudier, never NTU). The unit is stored per row, so consumers must check
+    # NOTE on `turbidity`: both ESP32 hardware and the Python simulator carry
+    # a PROVISIONAL RELATIVE INDEX 0-100 (higher = cloudier, never NTU). The unit is stored per row, so consumers must check
     # `turbidity_unit` before interpreting the number. A relative index is
-    # additionally bounded to [0, 100]; NTU-style values keep the >= 0 range.
+    # additionally bounded to [0, 100]; an explicitly NTU-tagged value keeps.
     sensor_ranges: Dict[str, Tuple[float, float]] = {
         "pH": (0.0, 14.0),
         "turbidity": (0.0, TURBIDITY_MAX_NTU),

@@ -333,7 +333,6 @@ def create_test(
         turbidity_unit=reading["turbidity_unit"],
         calibration=reading["calibration"],
         stability=reading.get("stability"),
-        aquaculture_context=payload.aquaculture_context,
     )
 
     test = ProductWaterTest(

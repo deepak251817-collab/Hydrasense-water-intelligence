@@ -32,10 +32,6 @@ Criteria" table):
 
 - Class A (drinking source, disinfection only): pH 6.5–8.5, DO >= 6 mg/L,
   BOD5 <= 2 mg/L, total coliform <= 50 MPN/100 mL
-- Class B (outdoor bathing): pH 6.5–8.5, DO >= 5 mg/L, BOD5 <= 3 mg/L,
-  total coliform <= 500 MPN/100 mL
-- Class D (wildlife and fisheries): pH 6.5–8.5, DO >= 4 mg/L,
-  free ammonia <= 1.2 mg/L (as N)
 - Class E (irrigation, industrial cooling, controlled waste disposal):
   pH 6.0–8.5, EC <= 2250 micromhos/cm at 25 C, SAR <= 26, boron <= 2 mg/L
 
@@ -117,8 +113,6 @@ class UseSpec:
 
 
 BIS_REF = "BIS IS 10500:2012 (Amd. 4), Table 1"
-CPCB_B = "CPCB DBU Class B (outdoor bathing)"
-CPCB_D = "CPCB DBU Class D (wildlife & fisheries)"
 CPCB_E = "CPCB DBU Class E (irrigation / industrial cooling)"
 
 DRINKING_LIMITATIONS = (
@@ -218,28 +212,6 @@ USES: tuple[UseSpec, ...] = (
         ),
     ),
     UseSpec(
-        code="bathing",
-        label="Outdoor bathing",
-        standard_code="CPCB-DBU-B",
-        standard_name="CPCB Designated Best Use — Class B (outdoor bathing)",
-        description="Organised outdoor bathing, assessed against CPCB Class B criteria.",
-        criteria=(
-            Criterion(key="ph", label="pH", unit="", acceptable_min=6.5, acceptable_max=8.5,
-                      reference=f"{CPCB_B}: pH 6.5–8.5"),
-        ),
-        # Parameters this hardware does not measure (listed as required, never
-        # evaluated as measurements): oxygen demand and microbiology.
-        required_unmeasured=(
-            ("dissolved_oxygen", "Dissolved oxygen", "CPCB Class B requires DO >= 5 mg/L — no DO sensor is installed"),
-            ("bod", "BOD (5 days, 20 °C)", "CPCB Class B requires BOD5 <= 3 mg/L — laboratory test"),
-            ("total_coliform", "Total coliform", "CPCB Class B requires <= 500 MPN/100 mL — laboratory test"),
-        ),
-        limitations=(
-            "Bathing suitability depends on microbiology (total coliform) and oxygen "
-            "demand, which this station does not measure.",
-        ),
-    ),
-    UseSpec(
         code="irrigation",
         label="Irrigation",
         standard_code="CPCB-DBU-E",
@@ -279,25 +251,6 @@ USES: tuple[UseSpec, ...] = (
         limitations=(
             "Actual cooling-system requirements (hardness, chloride, silica, scaling "
             "indices) depend on the plant and are not measured by this station.",
-        ),
-    ),
-    UseSpec(
-        code="aquatic_life",
-        label="Aquatic life (fisheries)",
-        standard_code="CPCB-DBU-D",
-        standard_name="CPCB Designated Best Use — Class D (propagation of wildlife & fisheries)",
-        description="Fisheries and wildlife propagation, assessed against CPCB Class D criteria.",
-        criteria=(
-            Criterion(key="ph", label="pH", unit="", acceptable_min=6.5, acceptable_max=8.5,
-                      reference=f"{CPCB_D}: pH 6.5–8.5"),
-        ),
-        required_unmeasured=(
-            ("dissolved_oxygen", "Dissolved oxygen", "CPCB Class D requires DO >= 4 mg/L — no DO sensor is installed"),
-            ("free_ammonia", "Free ammonia (as N)", "CPCB Class D requires free ammonia <= 1.2 mg/L — laboratory test"),
-        ),
-        limitations=(
-            "Dissolved oxygen and free ammonia are not measured by this station; "
-            "ecological suitability also depends on habitat and toxicants.",
         ),
     ),
 )

@@ -26,8 +26,6 @@ const USE_TO_API: Record<WaterUseCategory["id"], string> = {
   drinking: "drinking",
   domestic: "domestic",
   irrigation: "irrigation",
-  recreation: "swimming",
-  aquaculture: "aquaculture",
 };
 
 const RESULT_STYLES: Record<string, string> = {
